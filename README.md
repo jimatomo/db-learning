@@ -1,2 +1,120 @@
 # db-learning
-Learning database application
+
+SQLite（OLTP）と DuckDB（分析クエリの教材）を題材にした TODO アプリです。Bun + React（Vite）で実装し、`LESSON=a|b|c` で **同じ UI からスキーマ段階**を切り替えて体験できます。
+
+## 前提
+
+- [Docker](https://docs.docker.com/get-docker/) と Docker Compose v2
+- **ホストに Bun / Playwright / Node は不要**（すべてコンテナ内）
+
+## 開発（Docker）
+
+```sh
+# 初回・依存変更後はイメージをビルド
+docker compose -f docker-compose.dev.yml up --build
+```
+
+- フロント: [http://localhost:5173](http://localhost:5173)（Vite がコンテナ内の API `:3000` にプロキシ）
+- API をホストから直叩き: [http://localhost:3001](http://localhost:3001)（`docker-compose.dev.yml` の既定マッピング）
+
+Lesson を変える例（DB ファイルも合わせる）:
+
+```sh
+LESSON=a DATABASE_PATH=/data/app-a.db docker compose -f docker-compose.dev.yml up --build
+```
+
+停止:
+
+```sh
+docker compose -f docker-compose.dev.yml down
+```
+
+### Makefile（ホストに Node / Bun 不要）
+
+```sh
+make dev           # 開発サーバ起動
+make dev-down
+make seed
+make test
+make test-e2e
+make build         # 本番イメージを build
+make start         # docker compose up（本番）
+make clean-host-modules
+```
+
+ホストで npm 経由にする場合: API＋Vite の起動は **`npm run dev`**（内部で `docker compose`）、コンテナ内だけが使うのは **`dev:app`**（`dev-entrypoint.sh` から実行）。
+
+### Dev Container（Cursor / VS Code）
+
+`[.devcontainer/devcontainer.json](.devcontainer/devcontainer.json)` から `docker-compose.dev.yml` の `dev` サービスに接続できます。
+
+### ホストに残った node_modules を消す
+
+過去にホストで `bun install` 等した場合:
+
+```sh
+chmod +x scripts/rm-host-modules.sh
+./scripts/rm-host-modules.sh
+```
+
+## シード（Docker）
+
+```sh
+docker compose -f docker-compose.dev.yml run --rm --entrypoint bun dev run --cwd apps/server scripts/seed.ts
+# または
+npm run seed
+```
+
+## テスト（Docker）
+
+```sh
+# ユニット（DB / migration）
+docker compose -f docker-compose.dev.yml run --rm --entrypoint bun dev test apps/server/test/db.test.ts
+
+# E2E（本番イメージ + Playwright 専用イメージ）
+docker compose -f docker-compose.e2e.yml up --build --abort-on-container-exit --exit-code-from e2e
+docker compose -f docker-compose.e2e.yml down
+```
+
+`@playwright/test` は **Dockerfile.e2e** 内でのみ追加し、ホストの依存には含めていません。
+
+## 本番用コンテナ（単一）
+
+```sh
+docker compose up --build
+```
+
+- [http://localhost:8080](http://localhost:8080)
+- 永続化: 名前付きボリューム `db_data` → `/data`
+- 初回シード: `RUN_SEED=1`（`[docker-compose.yml](docker-compose.yml)`）
+
+## フロントの LESSON 表示
+
+`[apps/web/.env.production](apps/web/.env.production)` の `VITE_LESSON` を本番ビルドに埋め込みます。サーバの `LESSON` と揃えてください。
+
+## インサイト / DuckDB
+
+- 既定の API 実装は **SQLite 上で集計**。DuckDB 向けサンプルは `[packages/db/patterns/insights_duckdb.sql](packages/db/patterns/insights_duckdb.sql)`。
+- DuckDB **CLI** がコンテナの PATH にあり、`INSIGHTS_ENGINE=duckdb_cli` のとき、`duckdb -json :memory:` + `sqlite_attach` で同じクエリを実行します（開発 compose の `environment` で指定）。
+
+## 学習用スキーマ
+
+**このリポジトリでいちばん読むべきドキュメント:** [Lesson A/B/C のデータモデルと実践ガイド](docs/data-modeling-lessons.md)（UI 操作の手順付き）
+
+| Lesson | 内容                                    |
+| ------ | ------------------------------------- |
+| `a`    | `labels_csv` + 文字列 `status`（フラット）     |
+| `b`    | `statuses` / `labels` / `todo_labels` |
+| `c`    | `b` + 追記専用 `todo_events`（リプレイ・分析）     |
+
+
+SQL 断片: `[packages/db/lessons/](packages/db/lessons/)` と `[packages/db/patterns/README.md](packages/db/patterns/README.md)`
+
+## API 概要
+
+- `GET /api/meta/lesson` … 有効な lesson
+- `GET|POST|PATCH|DELETE` `/api/todos` `/api/labels` `/api/iterations`
+- `GET /api/statuses` … lesson A では既存 TODO 由来 + 既定列
+- `GET /api/insights/iterations/:id` … ラベル件数・イベント種別集計
+- `GET /api/insights/iterations/:id/replay` … `todo_events` 時系列（lesson c）
+- `GET /api/lessons/:lessonId/health` … マイグレーション件数など

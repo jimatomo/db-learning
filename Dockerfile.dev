@@ -1,0 +1,18 @@
+# 開発用: ソースは bind mount、node_modules は名前付きボリューム推奨
+FROM oven/bun:1
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package.json bun.lock ./
+COPY apps/server/package.json apps/server/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY packages/db/package.json packages/db/package.json
+RUN bun install
+
+COPY docker/dev-entrypoint.sh /usr/local/bin/dev-entrypoint.sh
+RUN chmod +x /usr/local/bin/dev-entrypoint.sh
+
+EXPOSE 3000 5173
+ENTRYPOINT ["/usr/local/bin/dev-entrypoint.sh"]

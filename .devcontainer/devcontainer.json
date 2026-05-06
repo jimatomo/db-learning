@@ -1,0 +1,8 @@
+{
+  "name": "db-learning",
+  "dockerComposeFile": ["../docker-compose.dev.yml"],
+  "service": "dev",
+  "workspaceFolder": "/app",
+  "forwardPorts": [3000, 5173],
+  "shutdownAction": "stopCompose"
+}

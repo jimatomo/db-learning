@@ -56,6 +56,26 @@ make test
 
 `[.devcontainer/devcontainer.json](.devcontainer/devcontainer.json)` から `docker-compose.dev.yml` の `dev` サービスに接続できます。
 
+Dev Containerから DuckDB の UI 拡張機能を利用できます。
+
+```sh
+duckdb -ui
+```
+
+ブラウザで UI が開きます。アプリが使っている **SQLite ファイル**は `docker-compose.dev.yml` のボリューム `/data` 上にあり、既定では `DATABASE_PATH=/data/app-c.db`（`LESSON` が `a` / `b` のときは `app-a.db` / `app-b.db`）です。実際のパスはコンテナのシェルで `echo $DATABASE_PATH` とすると確実です。
+
+SQLite を DuckDB から読むには、UI の SQL エディタで API と同様に **sqlite 拡張**を有効にしてから `sqlite_attach` します（パスは環境に合わせて置き換え）。
+
+```sql
+INSTALL sqlite;
+LOAD sqlite;
+CALL sqlite_attach('/data/app-c.db');
+SHOW TABLES;
+-- 例: SELECT * FROM todos LIMIT 10;
+```
+
+**注意:** 開発サーバが同じ DB を開いているとロックで失敗することがあります。その場合はアプリを止めるか、コピーしたファイルに対して `sqlite_attach` してください。
+
 ## シード（Docker）
 
 ```sh

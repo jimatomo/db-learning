@@ -171,6 +171,14 @@ const EMPTY_ITERATIONS: { id: number; name: string; startsAt: string | null; end
 const EMPTY_LABELS: { id: number; name: string; color: string }[] = [];
 const EMPTY_STATUSES: { id: number; name: string; sortOrder: number; color: string; autoStart: boolean; autoEnd: boolean }[] = [];
 
+function normalizeMarkdownNote(value: string) {
+  return value.replace(/\r\n/g, "\n").replace(/\n+$/g, "");
+}
+
+function readEditorMarkdown() {
+  return normalizeMarkdownNote($convertToMarkdownString(markdownTransformers, undefined, true));
+}
+
 function MarkdownEditorToolbar() {
   const [editor] = useLexicalComposerContext();
 
@@ -232,7 +240,7 @@ function MarkdownChangePlugin({ initialMarkdown, onChange }: { initialMarkdown: 
       ignoreSelectionChange
       onChange={(editorState: EditorState) => {
         editorState.read(() => {
-          const markdown = $convertToMarkdownString(markdownTransformers, undefined, true);
+          const markdown = readEditorMarkdown();
           if (markdown === lastMarkdownRef.current) return;
           lastMarkdownRef.current = markdown;
           onChange(markdown);
@@ -249,7 +257,7 @@ function MarkdownBlurCommitPlugin({ onCommit }: { onCommit: (value: string) => v
     let currentRootElement: HTMLElement | null = null;
     const handleBlur = () => {
       editor.getEditorState().read(() => {
-        onCommit($convertToMarkdownString(markdownTransformers, undefined, true));
+        onCommit(readEditorMarkdown());
       });
     };
 
@@ -356,8 +364,6 @@ export default function TodoSidePanel({ opened, onClose, selectedProjectId, todo
   };
 
   const readPendingDescription = () => {
-    const visibleText = document.querySelector<HTMLDivElement>(".todo-sidepanel .markdown-editor__lexical-input")?.innerText.trimEnd() ?? "";
-    if (visibleText && visibleText !== latestDescriptionRef.current) return visibleText;
     return latestDescriptionRef.current;
   };
 

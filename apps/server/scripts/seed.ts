@@ -24,7 +24,6 @@ function clear(lesson: Lesson) {
     db.run("DELETE FROM todos");
     db.run("DELETE FROM projects");
     db.run("DELETE FROM labels");
-    db.run("DELETE FROM sub_statuses");
     db.run("DELETE FROM statuses");
   } else {
     db.run("DELETE FROM todos");

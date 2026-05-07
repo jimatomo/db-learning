@@ -313,7 +313,7 @@ function groupEventsByTodo(events: ReplayEvent[]) {
 }
 
 function isProgressionEvent(event: ReplayEvent) {
-  return event.eventType === "status_change" || event.eventType === "sub_status_change";
+  return event.eventType === "status_change";
 }
 
 function isStatusChangeEvent(event: ReplayEvent) {
@@ -338,7 +338,6 @@ function fieldLabel(value: string) {
 function eventLabel(event: ReplayEvent) {
   if (event.eventType === "create") return "作成";
   if (event.eventType === "status_change") return "ステータス変更";
-  if (event.eventType === "sub_status_change") return "サブステータス変更";
   if (event.eventType === "label_add") return "ラベル追加";
   if (event.eventType === "label_remove") return "ラベル削除";
   if (event.eventType.endsWith("_change")) return `${fieldLabel(event.fieldName ?? event.eventType)} 変更`;

@@ -66,7 +66,6 @@ function createInitialState() {
     labelsCsv: "",
     status: "inbox",
     statusId: null as string | null,
-    subStatusId: null as string | null,
     projectId: null as string | null,
     iterationId: null as string | null,
     parentId: null as string | null,
@@ -85,7 +84,6 @@ function createFormFromTodo(todo: ApiTodo, timeZone: AppTimeZone) {
     labelsCsv: todo.labels.map((label) => label.name).join(","),
     status: todo.status,
     statusId: todo.statusId != null ? String(todo.statusId) : null,
-    subStatusId: null,
     projectId: todo.projectId != null ? String(todo.projectId) : null,
     iterationId: todo.iterationId != null ? String(todo.iterationId) : null,
     parentId: todo.parentId != null ? String(todo.parentId) : null,
@@ -453,7 +451,6 @@ export default function TodoSidePanel({ opened, onClose, selectedProjectId, todo
     } else {
       const sid = source.statusId ?? statusOptions[0]?.value ?? null;
       body.statusId = sid != null ? Number(sid) : null;
-      body.subStatusId = null;
       body.labelIds = source.pickedLabels;
     }
 
@@ -794,7 +791,7 @@ export default function TodoSidePanel({ opened, onClose, selectedProjectId, todo
                 label="ステータス"
                 data={statusOptions}
                 value={form.statusId ?? statusOptions[0]?.value ?? null}
-                onChange={(value: string | null) => setForm((current) => ({ ...current, statusId: value, subStatusId: null }))}
+                onChange={(value: string | null) => setForm((current) => ({ ...current, statusId: value }))}
                 disabled={statusOptions.length === 0}
                 classNames={leftFieldClassNames}
               />

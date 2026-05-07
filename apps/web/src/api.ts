@@ -7,9 +7,6 @@ export type ApiTodo = {
   description: string | null;
   status: string;
   statusId: number | null;
-  subStatus: string | null;
-  subStatusId: number | null;
-  subStatusVisible: boolean;
   labels: { id: number; name: string; color?: string }[];
   projectId: number | null;
   iterationId: number | null;
@@ -38,8 +35,6 @@ export type ApiProject = {
 };
 
 export type ApiStatus = { id: number; name: string; sortOrder: number; color: string; autoStart: boolean; autoEnd: boolean };
-
-export type ApiSubStatus = { id: number; name: string; sortOrder: number; visible: boolean };
 
 export type ApiLabel = { id: number; name: string; color: string };
 
@@ -102,15 +97,6 @@ export const api = {
     j<ApiStatus>("/api/statuses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   patchStatus: (id: number, body: { name?: string; sortOrder?: number; color?: string; autoStart?: boolean; autoEnd?: boolean }) =>
     j<ApiStatus>(`/api/statuses/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
-  subStatuses: () => j<ApiSubStatus[]>("/api/sub-statuses"),
-  createSubStatus: (body: { name: string; sortOrder?: number; visible?: boolean }) =>
-    j<ApiSubStatus>("/api/sub-statuses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
-  patchSubStatus: (id: number, body: { name?: string; sortOrder?: number; visible?: boolean }) =>
-    j<ApiSubStatus>(`/api/sub-statuses/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
-  deleteSubStatus: (id: number) =>
-    fetch(`/api/sub-statuses/${id}`, { method: "DELETE" }).then((r) => {
-      if (!r.ok) throw new Error(r.statusText);
-    }),
   insights: (iterationId: number, projectId?: number | null) =>
     j<{
       iterationId: number;

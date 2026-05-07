@@ -8,7 +8,6 @@ import { duckdbCompletionTimes, duckdbEventSummary, duckdbIterationTrends, duckd
 import * as projectRepo from "./projectRepo";
 import * as settingsRepo from "./settingsRepo";
 import * as statusRepo from "./statusRepo";
-import * as subStatusRepo from "./subStatusRepo";
 import * as todoRepo from "./todoRepo";
 
 export type AppEnv = {
@@ -102,52 +101,6 @@ export function createApp(db: Database, lesson: Lesson, sqlitePath: string): Hon
       return c.json(row);
     } catch (e) {
       if ((e as Error).message === "LESSON_A_STATUSES") return c.json({ error: "not available in lesson A" }, 422);
-      throw e;
-    }
-  });
-
-  app.get("/api/sub-statuses", (c) => c.json(subStatusRepo.listSubStatuses(c.get("db"), c.get("lesson"))));
-  app.post("/api/sub-statuses", async (c) => {
-    try {
-      const body = (await c.req.json()) as Record<string, unknown>;
-      const row = subStatusRepo.createSubStatus(c.get("db"), c.get("lesson"), {
-        name: String(body.name ?? ""),
-        sortOrder: body.sortOrder !== undefined ? Number(body.sortOrder) : body.sort_order !== undefined ? Number(body.sort_order) : 0,
-        visible: body.visible !== undefined ? Boolean(body.visible) : undefined,
-      });
-      return c.json(row, 201);
-    } catch (e) {
-      if ((e as Error).message === "LESSON_A_SUB_STATUSES") return c.json({ error: "not available in lesson A" }, 422);
-      throw e;
-    }
-  });
-  app.patch("/api/sub-statuses/:id", async (c) => {
-    try {
-      const body = (await c.req.json()) as Record<string, unknown>;
-      const row = subStatusRepo.updateSubStatus(c.get("db"), c.get("lesson"), Number(c.req.param("id")), {
-        name: body.name !== undefined ? String(body.name) : undefined,
-        sortOrder:
-          body.sortOrder !== undefined
-            ? Number(body.sortOrder)
-            : body.sort_order !== undefined
-              ? Number(body.sort_order)
-              : undefined,
-        visible: body.visible !== undefined ? Boolean(body.visible) : undefined,
-      });
-      if (!row) return c.json({ error: "not found" }, 404);
-      return c.json(row);
-    } catch (e) {
-      if ((e as Error).message === "LESSON_A_SUB_STATUSES") return c.json({ error: "not available in lesson A" }, 422);
-      throw e;
-    }
-  });
-  app.delete("/api/sub-statuses/:id", (c) => {
-    try {
-      const ok = subStatusRepo.deleteSubStatus(c.get("db"), c.get("lesson"), Number(c.req.param("id")));
-      if (!ok) return c.json({ error: "not found" }, 404);
-      return c.body(null, 204);
-    } catch (e) {
-      if ((e as Error).message === "LESSON_A_SUB_STATUSES") return c.json({ error: "not available in lesson A" }, 422);
       throw e;
     }
   });
@@ -284,7 +237,6 @@ export function createApp(db: Database, lesson: Lesson, sqlitePath: string): Hon
       description: (body.description as string | null | undefined) ?? null,
       status: body.status as string | undefined,
       statusId: body.statusId as number | undefined,
-      subStatusId: body.subStatusId as number | null | undefined,
       labelIds: body.labelIds as number[] | undefined,
       labelsCsv: body.labelsCsv as string | undefined,
       projectId: (body.projectId as number | null | undefined) ?? (body.project_id as number | null | undefined),
@@ -307,7 +259,6 @@ export function createApp(db: Database, lesson: Lesson, sqlitePath: string): Hon
       description: body.description as string | null | undefined,
       status: body.status as string | undefined,
       statusId: body.statusId as number | undefined,
-      subStatusId: body.subStatusId as number | null | undefined,
       labelsCsv: body.labelsCsv as string | undefined,
       labelIds: body.labelIds as number[] | undefined,
       projectId:

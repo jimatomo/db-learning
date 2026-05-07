@@ -1,13 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { completionTimesSqlite, eventSummarySqlite, iterationTrendsSqlite, labelCountsSqlite, replaySqlite } from "../src/insights";
 import { runLessonMigrations } from "../src/migrate";
 import * as projectRepo from "../src/projectRepo";
 import * as settingsRepo from "../src/settingsRepo";
 import * as statusRepo from "../src/statusRepo";
-import * as subStatusRepo from "../src/subStatusRepo";
 import * as todoRepo from "../src/todoRepo";
 
 const root = join(import.meta.dir, "..", "..", "..", "tmp-test-db");
@@ -47,42 +46,24 @@ describe("migrations", () => {
         const subStatusTable = db.query(`SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'sub_statuses'`).get() as {
           n: number;
         };
-        expect(subStatusTable.n).toBe(1);
+        expect(subStatusTable.n).toBe(0);
         const subStatusColumn = db.query(`SELECT COUNT(*) AS n FROM pragma_table_info('todos') WHERE name = 'sub_status_id'`).get() as {
           n: number;
         };
-        expect(subStatusColumn.n).toBe(1);
+        expect(subStatusColumn.n).toBe(0);
+      }
+      if (lesson === "c") {
+        const eventIterationColumn = db.query(`SELECT COUNT(*) AS n FROM pragma_table_info('todo_events') WHERE name = 'iteration_id'`).get() as {
+          n: number;
+        };
+        expect(eventIterationColumn.n).toBe(0);
+        const eventProjectColumn = db.query(`SELECT COUNT(*) AS n FROM pragma_table_info('todo_events') WHERE name = 'project_id'`).get() as {
+          n: number;
+        };
+        expect(eventProjectColumn.n).toBe(0);
       }
       db.close();
     }
-  });
-});
-
-describe("sub statuses", () => {
-  test("todo sub status round-trip and visibility", () => {
-    const { db } = openLesson("c");
-    const sid = (db.query(`SELECT id FROM statuses WHERE name='todo' LIMIT 1`).get() as { id: number }).id;
-    const blocked = subStatusRepo.createSubStatus(db, "c", { name: "needs input", sortOrder: 10, visible: true });
-
-    const created = todoRepo.createTodo(db, "c", {
-      title: "sub status task",
-      statusId: sid,
-      subStatusId: blocked.id,
-    });
-
-    expect(created.subStatusId).toBe(blocked.id);
-    expect(created.subStatus).toBe("needs input");
-    expect(created.subStatusVisible).toBe(true);
-
-    subStatusRepo.updateSubStatus(db, "c", blocked.id, { visible: false });
-    const hidden = todoRepo.getTodo(db, "c", created.id);
-    expect(hidden?.subStatus).toBe("needs input");
-    expect(hidden?.subStatusVisible).toBe(false);
-
-    const cleared = todoRepo.updateTodo(db, "c", created.id, { subStatusId: null });
-    expect(cleared?.subStatusId).toBeNull();
-    expect(cleared?.subStatus).toBeNull();
-    db.close();
   });
 });
 
@@ -93,37 +74,6 @@ describe("workflow statuses", () => {
     expect(statuses.map((status) => status.name)).toEqual(["inbox", "todo", "doing", "review", "waiting", "done"]);
     expect(statuses.find((status) => status.name === "doing")).toMatchObject({ autoStart: true, autoEnd: false });
     expect(statuses.find((status) => status.name === "done")).toMatchObject({ autoStart: false, autoEnd: true });
-    db.close();
-  });
-
-  test("legacy sub statuses migrate into flat statuses", () => {
-    const { db } = openLesson("c");
-    const reviewId = (db.query(`SELECT id FROM statuses WHERE name='review'`).get() as { id: number }).id;
-    const waitingId = (db.query(`SELECT id FROM statuses WHERE name='waiting'`).get() as { id: number }).id;
-    const todoId = (db.query(`SELECT id FROM statuses WHERE name='todo'`).get() as { id: number }).id;
-    const reviewSubId = (db.query(`SELECT id FROM sub_statuses WHERE name='review'`).get() as { id: number }).id;
-    const blockedSubId = (db.query(`SELECT id FROM sub_statuses WHERE name='blocked'`).get() as { id: number }).id;
-
-    db.query(`INSERT INTO todos (title, description, status_id, sub_status_id, sort_order) VALUES ('r','',?,?,0)`).run(
-      todoId,
-      reviewSubId,
-    );
-    db.query(`INSERT INTO todos (title, description, status_id, sub_status_id, sort_order) VALUES ('b','',?,?,1)`).run(
-      todoId,
-      blockedSubId,
-    );
-
-    db.exec(readFileSync(join(import.meta.dir, "..", "..", "..", "packages/db/lessons/c/migrations/006_flat_workflow_statuses.sql"), "utf8"));
-
-    const rows = db.query(`SELECT title, status_id, sub_status_id FROM todos ORDER BY title`).all() as {
-      title: string;
-      status_id: number;
-      sub_status_id: number | null;
-    }[];
-    expect(rows).toEqual([
-      { title: "b", status_id: waitingId, sub_status_id: null },
-      { title: "r", status_id: reviewId, sub_status_id: null },
-    ]);
     db.close();
   });
 
@@ -362,7 +312,7 @@ describe("lesson c events", () => {
     db.close();
   });
 
-  test("insight events stay attached to the event-time iteration and project", () => {
+  test("insight events follow the todo's current iteration and project", () => {
     const { db } = openLesson("c");
     db.run(`INSERT INTO iterations (name, sort_order) VALUES ('S1',0), ('S2',1)`);
     db.run(`INSERT INTO projects (name, sort_order) VALUES ('P1',0), ('P2',1)`);
@@ -391,10 +341,9 @@ describe("lesson c events", () => {
     todoRepo.deleteTodo(db, "c", deleted.id);
 
     const firstProjectEvents = replaySqlite(db, "c", firstIterationId, firstProjectId);
-    expect(firstProjectEvents.map((event) => event.eventType)).toEqual(["create", "iteration_change", "project_change", "create", "delete"]);
-    expect(firstProjectEvents.find((event) => event.eventType === "delete")?.todoId).toBeNull();
+    expect(firstProjectEvents).toEqual([]);
     const secondProjectEvents = replaySqlite(db, "c", secondIterationId, secondProjectId);
-    expect(secondProjectEvents).toEqual([]);
+    expect(secondProjectEvents.map((event) => event.eventType)).toEqual(["create", "iteration_change", "project_change"]);
     db.close();
   });
 });
@@ -431,13 +380,13 @@ describe("insights sqlite", () => {
     db.query(`INSERT INTO todo_labels (todo_id, label_id) VALUES (?,?)`).run(tid, lid);
     db.query(`INSERT INTO todo_labels (todo_id, label_id) VALUES (?,?)`).run(otherTid, otherLid);
     db.query(
-      `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor, iteration_id, project_id)
-       VALUES (?, 'create', 'todo', NULL, 'a', datetime('now'), 't', ?, ?)`,
-    ).run(tid, itId, projectId);
+      `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor)
+       VALUES (?, 'create', 'todo', NULL, 'a', datetime('now'), 't')`,
+    ).run(tid);
     db.query(
-      `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor, iteration_id, project_id)
-       VALUES (?, 'delete', 'todo', 'b', NULL, datetime('now'), 't', ?, ?)`,
-    ).run(otherTid, itId, otherProjectId);
+      `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor)
+       VALUES (?, 'delete', 'todo', 'b', NULL, datetime('now'), 't')`,
+    ).run(otherTid);
 
     const labels = labelCountsSqlite(db, "c", itId);
     expect(labels.find((l) => l.name === "x")?.count).toBe(1);

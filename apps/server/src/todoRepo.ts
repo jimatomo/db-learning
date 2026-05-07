@@ -9,9 +9,6 @@ export type ApiTodo = {
   description: string | null;
   status: string;
   statusId: number | null;
-  subStatus: string | null;
-  subStatusId: number | null;
-  subStatusVisible: boolean;
   labels: ApiLabel[];
   projectId: number | null;
   iterationId: number | null;
@@ -72,9 +69,6 @@ export function listTodos(db: Database, lesson: Lesson, filters: { projectId?: n
         description: r.description,
         status: r.status,
         statusId: null,
-        subStatus: null,
-        subStatusId: null,
-        subStatusVisible: false,
         labels,
         projectId: r.project_id,
         iterationId: r.iteration_id,
@@ -92,11 +86,9 @@ export function listTodos(db: Database, lesson: Lesson, filters: { projectId?: n
   const rows = db
     .query(
       `SELECT t.id, t.title, t.description, t.status_id, s.name AS status_name,
-              t.sub_status_id, ss.name AS sub_status_name, ss.visible AS sub_status_visible,
               t.parent_id, t.iteration_id, t.project_id, t.planned_start_at, t.start_at, t.due_at, t.end_at,
               t.sort_order, t.created_at, t.updated_at
        FROM todos t JOIN statuses s ON s.id = t.status_id
-       LEFT JOIN sub_statuses ss ON ss.id = t.sub_status_id
        ${filters.projectId == null ? "" : "WHERE t.project_id = ?"}
        ORDER BY t.sort_order, t.id`,
     )
@@ -106,9 +98,6 @@ export function listTodos(db: Database, lesson: Lesson, filters: { projectId?: n
     description: string | null;
     status_id: number;
     status_name: string;
-    sub_status_id: number | null;
-    sub_status_name: string | null;
-    sub_status_visible: number | null;
     project_id: number | null;
     parent_id: number | null;
     iteration_id: number | null;
@@ -137,9 +126,6 @@ export function listTodos(db: Database, lesson: Lesson, filters: { projectId?: n
     description: r.description,
     status: r.status_name,
     statusId: r.status_id,
-    subStatus: r.sub_status_name,
-    subStatusId: r.sub_status_id,
-    subStatusVisible: Boolean(r.sub_status_visible),
     labels: byTodo.get(r.id) ?? [],
     projectId: r.project_id,
     iterationId: r.iteration_id,
@@ -165,13 +151,11 @@ function insertEvent(
   fieldName: string,
   fromValue: string | null,
   toValue: string | null,
-  iterationId: number | null,
-  projectId: number | null,
 ) {
   db.query(
-    `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, actor, iteration_id, project_id)
-     VALUES (?,?,?,?,?,?,?,?)`,
-  ).run(todoId, eventType, fieldName, fromValue, toValue, process.env.ACTOR ?? "system", iterationId, projectId);
+    `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, actor)
+     VALUES (?,?,?,?,?,?)`,
+  ).run(todoId, eventType, fieldName, fromValue, toValue, process.env.ACTOR ?? "system");
 }
 
 function eventValue(value: string | number | null | undefined): string | null {
@@ -260,7 +244,6 @@ export function createTodo(
     description?: string | null;
     status?: string;
     statusId?: number;
-    subStatusId?: number | null;
     labelIds?: number[];
     labelsCsv?: string;
     projectId?: number | null;
@@ -315,14 +298,13 @@ export function createTodo(
   try {
     const r = db
       .query(
-        `INSERT INTO todos (title, description, status_id, sub_status_id, parent_id, iteration_id, project_id, planned_start_at, start_at, due_at, end_at, sort_order)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+        `INSERT INTO todos (title, description, status_id, parent_id, iteration_id, project_id, planned_start_at, start_at, due_at, end_at, sort_order)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
       )
       .get(
         body.title,
         body.description ?? null,
         statusId,
-        body.subStatusId ?? null,
         body.parentId ?? null,
         body.iterationId ?? null,
         body.projectId ?? null,
@@ -333,18 +315,14 @@ export function createTodo(
         body.sortOrder ?? 0,
       ) as { id: number };
     const todoId = r.id;
-    const eventContext = db.query(`SELECT iteration_id, project_id FROM todos WHERE id = ?`).get(todoId) as {
-      iteration_id: number | null;
-      project_id: number | null;
-    };
     if (lesson === "c") {
-      insertEvent(db, todoId, "create", "todo", null, body.title, eventContext.iteration_id, eventContext.project_id);
+      insertEvent(db, todoId, "create", "todo", null, body.title);
     }
     for (const lid of body.labelIds ?? []) {
       db.query(`INSERT OR IGNORE INTO todo_labels (todo_id, label_id) VALUES (?,?)`).run(todoId, lid);
       if (lesson === "c") {
         const ln = db.query(`SELECT name FROM labels WHERE id = ?`).get(lid) as { name: string } | null;
-        insertEvent(db, todoId, "label_add", "labels", null, ln?.name ?? String(lid), eventContext.iteration_id, eventContext.project_id);
+        insertEvent(db, todoId, "label_add", "labels", null, ln?.name ?? String(lid));
       }
     }
     db.run("COMMIT");
@@ -364,7 +342,6 @@ export function updateTodo(
     description: string | null;
     status: string;
     statusId: number;
-    subStatusId: number | null;
     labelsCsv: string;
     labelIds: number[];
     projectId: number | null;
@@ -446,74 +423,58 @@ export function updateTodo(
   }
   db.run("BEGIN");
   try {
-    const row = db.query(`SELECT status_id, sub_status_id, iteration_id, parent_id, project_id FROM todos WHERE id = ?`).get(id) as {
-      status_id: number;
-      sub_status_id: number | null;
-      iteration_id: number | null;
-      parent_id: number | null;
-      project_id: number | null;
-    };
     if (patch.title !== undefined && changedValue(cur.title, patch.title)) {
       db.query(`UPDATE todos SET title = ?, updated_at = datetime('now') WHERE id = ?`).run(patch.title, id);
-      if (lesson === "c") insertEvent(db, id, "update", "title", cur.title, patch.title, row.iteration_id, row.project_id);
+      if (lesson === "c") insertEvent(db, id, "update", "title", cur.title, patch.title);
     }
     if (patch.description !== undefined && changedValue(cur.description, patch.description)) {
       db.query(`UPDATE todos SET description = ?, updated_at = datetime('now') WHERE id = ?`).run(patch.description, id);
       if (lesson === "c") {
         const noteChange = changedNoteDiff(cur.description, patch.description);
-        insertEvent(db, id, "update", "description", noteChange.summary, JSON.stringify(noteChange), row.iteration_id, row.project_id);
+        insertEvent(db, id, "update", "description", noteChange.summary, JSON.stringify(noteChange));
       }
-    }
-    if (patch.subStatusId !== undefined && patch.subStatusId !== cur.subStatusId) {
-      const fromName = cur.subStatus ?? "";
-      const toRow =
-        patch.subStatusId == null
-          ? null
-          : (db.query(`SELECT name FROM sub_statuses WHERE id = ?`).get(patch.subStatusId) as { name: string } | null);
-      db.query(`UPDATE todos SET sub_status_id = ?, updated_at = datetime('now') WHERE id = ?`).run(patch.subStatusId, id);
-      if (lesson === "c") insertEvent(db, id, "sub_status_change", "sub_status", fromName, toRow?.name ?? "", row.iteration_id, row.project_id);
     }
     if (patch.iterationId !== undefined && patch.iterationId !== cur.iterationId) {
       const from = eventValue(cur.iterationId);
       const to = eventValue(patch.iterationId);
       db.query(`UPDATE todos SET iteration_id = ?, updated_at = datetime('now') WHERE id = ?`).run(patch.iterationId, id);
-      if (lesson === "c") insertEvent(db, id, "iteration_change", "iteration", from, to, row.iteration_id, row.project_id);
+      if (lesson === "c") insertEvent(db, id, "iteration_change", "iteration", from, to);
     }
     if (patch.projectId !== undefined && patch.projectId !== cur.projectId) {
       const from = eventValue(cur.projectId);
       const to = eventValue(patch.projectId);
       db.query(`UPDATE todos SET project_id = ?, updated_at = datetime('now') WHERE id = ?`).run(patch.projectId, id);
-      if (lesson === "c") insertEvent(db, id, "project_change", "project", from, to, row.iteration_id, row.project_id);
+      if (lesson === "c") insertEvent(db, id, "project_change", "project", from, to);
     }
     if (patch.parentId !== undefined && patch.parentId !== cur.parentId) {
       const from = eventValue(cur.parentId);
       const to = eventValue(patch.parentId);
       db.query(`UPDATE todos SET parent_id = ?, updated_at = datetime('now') WHERE id = ?`).run(patch.parentId, id);
-      if (lesson === "c") insertEvent(db, id, "parent_change", "parent", from, to, row.iteration_id, row.project_id);
+      if (lesson === "c") insertEvent(db, id, "parent_change", "parent", from, to);
     }
     if (patch.plannedStartAt !== undefined && changedValue(cur.plannedStartAt, patch.plannedStartAt)) {
       db.query(`UPDATE todos SET planned_start_at = ?, updated_at = datetime('now') WHERE id = ?`).run(patch.plannedStartAt, id);
       if (lesson === "c")
-        insertEvent(db, id, "update", "planned_start_at", eventValue(cur.plannedStartAt), eventValue(patch.plannedStartAt), row.iteration_id, row.project_id);
+        insertEvent(db, id, "update", "planned_start_at", eventValue(cur.plannedStartAt), eventValue(patch.plannedStartAt));
     }
     if (patch.startAt !== undefined && changedValue(cur.startAt, patch.startAt)) {
       db.query(`UPDATE todos SET start_at = ?, updated_at = datetime('now') WHERE id = ?`).run(patch.startAt, id);
-      if (lesson === "c") insertEvent(db, id, "update", "start_at", eventValue(cur.startAt), eventValue(patch.startAt), row.iteration_id, row.project_id);
+      if (lesson === "c") insertEvent(db, id, "update", "start_at", eventValue(cur.startAt), eventValue(patch.startAt));
     }
     if (patch.dueAt !== undefined && changedValue(cur.dueAt, patch.dueAt)) {
       db.query(`UPDATE todos SET due_at = ?, updated_at = datetime('now') WHERE id = ?`).run(patch.dueAt, id);
-      if (lesson === "c") insertEvent(db, id, "update", "due_at", eventValue(cur.dueAt), eventValue(patch.dueAt), row.iteration_id, row.project_id);
+      if (lesson === "c") insertEvent(db, id, "update", "due_at", eventValue(cur.dueAt), eventValue(patch.dueAt));
     }
     if (patch.endAt !== undefined && changedValue(cur.endAt, patch.endAt)) {
       db.query(`UPDATE todos SET end_at = ?, updated_at = datetime('now') WHERE id = ?`).run(patch.endAt, id);
-      if (lesson === "c") insertEvent(db, id, "update", "end_at", eventValue(cur.endAt), eventValue(patch.endAt), row.iteration_id, row.project_id);
+      if (lesson === "c") insertEvent(db, id, "update", "end_at", eventValue(cur.endAt), eventValue(patch.endAt));
     }
     if (patch.statusId !== undefined && patch.statusId !== cur.statusId) {
       const fromName = cur.status;
       const toRow = db.query(`SELECT name FROM statuses WHERE id = ?`).get(patch.statusId) as { name: string } | null;
       db.query(`UPDATE todos SET status_id = ?, updated_at = datetime('now') WHERE id = ?`).run(patch.statusId, id);
       if (lesson === "c")
-        insertEvent(db, id, "status_change", "status", fromName, toRow?.name ?? String(patch.statusId), row.iteration_id, row.project_id);
+        insertEvent(db, id, "status_change", "status", fromName, toRow?.name ?? String(patch.statusId));
     }
     if (patch.sortOrder !== undefined && changedValue(cur.sortOrder, patch.sortOrder)) {
       db.query(`UPDATE todos SET sort_order = ?, updated_at = datetime('now') WHERE id = ?`).run(patch.sortOrder, id);
@@ -528,7 +489,7 @@ export function updateTodo(
           labelsChanged = true;
           if (lesson === "c") {
             const ln = db.query(`SELECT name FROM labels WHERE id = ?`).get(lid) as { name: string } | null;
-            insertEvent(db, id, "label_remove", "labels", ln?.name ?? String(lid), null, row.iteration_id, row.project_id);
+            insertEvent(db, id, "label_remove", "labels", ln?.name ?? String(lid), null);
           }
         }
       }
@@ -538,7 +499,7 @@ export function updateTodo(
           labelsChanged = true;
           if (lesson === "c") {
             const ln = db.query(`SELECT name FROM labels WHERE id = ?`).get(lid) as { name: string } | null;
-            insertEvent(db, id, "label_add", "labels", null, ln?.name ?? String(lid), row.iteration_id, row.project_id);
+            insertEvent(db, id, "label_add", "labels", null, ln?.name ?? String(lid));
           }
         }
       }
@@ -560,11 +521,7 @@ export function deleteTodo(db: Database, lesson: Lesson, id: number): boolean {
   if (lesson === "c") {
     db.run("BEGIN");
     try {
-      const eventContext = db.query(`SELECT iteration_id, project_id FROM todos WHERE id = ?`).get(id) as {
-        iteration_id: number | null;
-        project_id: number | null;
-      };
-      insertEvent(db, id, "delete", "todo", cur.title, null, eventContext.iteration_id, eventContext.project_id);
+      insertEvent(db, id, "delete", "todo", cur.title, null);
       db.query(`DELETE FROM todos WHERE id = ?`).run(id);
       db.run("COMMIT");
     } catch (e) {

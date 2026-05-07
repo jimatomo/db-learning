@@ -7,10 +7,11 @@
 1. [なぜデータモデルが重要か](#なぜデータモデルが重要か)
 2. [Lesson の切り替え（必読）](#lesson-の切り替え必読)
 3. [3 Lesson の対比](#3-lesson-の対比)
-4. [各 Lesson のスキーマと設計意図](#各-lesson-のスキーマと設計意図)
-5. [アプリで体験する（ハンズオン）](#アプリで体験するハンズオン)
-6. [実装がどう差を吸収しているか](#実装がどう差を吸収しているか)
-7. [さらに読む](#さらに読む)
+4. [ER 図](#er-図)
+5. [各 Lesson のスキーマと設計意図](#各-lesson-のスキーマと設計意図)
+6. [アプリで体験する（ハンズオン）](#アプリで体験するハンズオン)
+7. [実装がどう差を吸収しているか](#実装がどう差を吸収しているか)
+8. [さらに読む](#さらに読む)
 
 ---
 
@@ -38,7 +39,7 @@
 
 - 環境変数 `LESSON` が `a` / `b` / `c` を決めます（未設定・不正値は **`c`**）。
 - DB ファイルは `DATABASE_PATH` が無いとき、**サーバプロセスの作業ディレクトリ**を起点とした `data/app-{lesson}.db` です。Docker dev では `DATABASE_PATH=/data/app-c.db` が既定で入るため、通常は意識不要です。**Lesson を変えたら別ファイルを指す**のが安全です。
-- Web 側は起動後に `GET /api/meta/lesson` を呼び、その結果を真として UI を分岐します。`apps/web/.env.production` の `VITE_LESSON` は **API が応答するまでのフォールバック**にすぎません。
+- Web 側は起動後に `GET /api/meta/lesson` を呼び、その結果を真として UI を分岐します。API が応答する前は `c` を一時表示します。
 
 参照: [`apps/server/src/config.ts`](../apps/server/src/config.ts)、[`apps/web/src/App.tsx`](../apps/web/src/App.tsx)
 
@@ -62,12 +63,6 @@ Lesson を切り替える前に `docker compose -f docker-compose.dev.yml down` 
 - ブラウザ: **http://localhost:5173**
 - API（ホスト直）: **http://localhost:3001**（既定ポート。`DEV_API_PORT` で変更可）
 
-### 本番ビルドの注意
-
-本番では Web に `VITE_LESSON` が埋め込まれるため、**サーバの `LESSON` と一致**させてください。開発 compose では通常、API の `GET /api/meta/lesson` が実効値になります。
-
----
-
 ## 3 Lesson の対比
 
 | 項目 | Lesson A | Lesson B | Lesson C |
@@ -79,6 +74,212 @@ Lesson を切り替える前に `docker compose -f docker-compose.dev.yml down` 
 | Insights の replay 等 | **イベント系は空・案内** | 同左 | **利用可能** |
 
 短いパターン要約: [`packages/db/patterns/README.md`](../packages/db/patterns/README.md)
+
+---
+
+## ER 図
+
+以下は各 Lesson のマイグレーションを最後まで適用した後の概念図です。`schema_migrations` はアプリのドメインモデルではないため省略しています。
+
+### Lesson A
+
+Lesson A は TODO 行にステータス文字列とラベル CSV を直接持たせるフラットな形です。`projects` / `iterations` / 親 TODO への参照はありますが、ステータスやラベルのマスタはありません。
+
+```mermaid
+erDiagram
+  ITERATIONS ||--o{ TODOS : contains
+  PROJECTS ||--o{ TODOS : groups
+  TODOS ||--o{ TODOS : parent_of
+
+  ITERATIONS {
+    INTEGER id PK
+    TEXT name
+    TEXT starts_at
+    TEXT ends_at
+    INTEGER sort_order
+  }
+
+  PROJECTS {
+    INTEGER id PK
+    TEXT name
+    INTEGER sort_order
+  }
+
+  TODOS {
+    INTEGER id PK
+    TEXT title
+    TEXT description
+    TEXT labels_csv
+    TEXT status
+    INTEGER parent_id FK
+    INTEGER iteration_id FK
+    INTEGER project_id FK
+    TEXT planned_start_at
+    TEXT start_at
+    TEXT due_at
+    TEXT end_at
+    INTEGER sort_order
+    TEXT created_at
+    TEXT updated_at
+  }
+
+  APP_SETTINGS {
+    INTEGER id PK
+    TEXT time_zone
+  }
+```
+
+### Lesson B
+
+Lesson B はステータスとラベルをマスタ化し、TODO とラベルの多対多を `todo_labels` で表現します。途中で追加された補助的な状態は `statuses` に統合済みで、現在の状態管理は `statuses` に一本化しています。
+
+```mermaid
+erDiagram
+  STATUSES ||--o{ TODOS : classifies
+  ITERATIONS ||--o{ TODOS : contains
+  PROJECTS ||--o{ TODOS : groups
+  TODOS ||--o{ TODOS : parent_of
+  TODOS ||--o{ TODO_LABELS : has
+  LABELS ||--o{ TODO_LABELS : tags
+
+  STATUSES {
+    INTEGER id PK
+    TEXT name UK
+    INTEGER sort_order
+    TEXT color
+    INTEGER auto_start
+    INTEGER auto_end
+  }
+
+  LABELS {
+    INTEGER id PK
+    TEXT name UK
+    TEXT color
+  }
+
+  ITERATIONS {
+    INTEGER id PK
+    TEXT name
+    TEXT starts_at
+    TEXT ends_at
+    INTEGER sort_order
+  }
+
+  PROJECTS {
+    INTEGER id PK
+    TEXT name
+    INTEGER sort_order
+  }
+
+  TODOS {
+    INTEGER id PK
+    TEXT title
+    TEXT description
+    INTEGER status_id FK
+    INTEGER parent_id FK
+    INTEGER iteration_id FK
+    INTEGER project_id FK
+    TEXT planned_start_at
+    TEXT start_at
+    TEXT due_at
+    TEXT end_at
+    INTEGER sort_order
+    TEXT created_at
+    TEXT updated_at
+  }
+
+  TODO_LABELS {
+    INTEGER todo_id PK, FK
+    INTEGER label_id PK, FK
+  }
+
+  APP_SETTINGS {
+    INTEGER id PK
+    TEXT time_zone
+  }
+```
+
+### Lesson C
+
+Lesson C は Lesson B の現在状態モデルに `todo_events` を足し、変更履歴を追記していく形です。Insight の所属判定は `todo_events` ではなく、現在の `todos.iteration_id` / `todos.project_id` を JOIN して使います。
+
+```mermaid
+erDiagram
+  STATUSES ||--o{ TODOS : classifies
+  ITERATIONS ||--o{ TODOS : contains
+  PROJECTS ||--o{ TODOS : groups
+  TODOS ||--o{ TODOS : parent_of
+  TODOS ||--o{ TODO_LABELS : has
+  LABELS ||--o{ TODO_LABELS : tags
+  TODOS ||--o{ TODO_EVENTS : records
+
+  STATUSES {
+    INTEGER id PK
+    TEXT name UK
+    INTEGER sort_order
+    TEXT color
+    INTEGER auto_start
+    INTEGER auto_end
+  }
+
+  LABELS {
+    INTEGER id PK
+    TEXT name UK
+    TEXT color
+  }
+
+  ITERATIONS {
+    INTEGER id PK
+    TEXT name
+    TEXT starts_at
+    TEXT ends_at
+    INTEGER sort_order
+  }
+
+  PROJECTS {
+    INTEGER id PK
+    TEXT name
+    INTEGER sort_order
+  }
+
+  TODOS {
+    INTEGER id PK
+    TEXT title
+    TEXT description
+    INTEGER status_id FK
+    INTEGER parent_id FK
+    INTEGER iteration_id FK
+    INTEGER project_id FK
+    TEXT planned_start_at
+    TEXT start_at
+    TEXT due_at
+    TEXT end_at
+    INTEGER sort_order
+    TEXT created_at
+    TEXT updated_at
+  }
+
+  TODO_LABELS {
+    INTEGER todo_id PK, FK
+    INTEGER label_id PK, FK
+  }
+
+  TODO_EVENTS {
+    INTEGER id PK
+    INTEGER todo_id FK
+    TEXT event_type
+    TEXT field_name
+    TEXT from_value
+    TEXT to_value
+    TEXT occurred_at
+    TEXT actor
+  }
+
+  APP_SETTINGS {
+    INTEGER id PK
+    TEXT time_zone
+  }
+```
 
 ---
 
@@ -106,7 +307,7 @@ Lesson を切り替える前に `docker compose -f docker-compose.dev.yml down` 
 - `todos.status_id` は `statuses` への **NOT NULL 外部キー** → 存在しないステータスは保存できない。
 - ラベルはマスタ＋中間テーブル → **名前の一意性**や **TODO ごとのタグ集合**を素直に表現。
 
-途中で `sub_statuses` が入りますが、[`006_flat_workflow_statuses.sql`](../packages/db/lessons/b/migrations/006_flat_workflow_statuses.sql) でメイン `statuses` に寄せるデータ移行があります（「モデルは進化する」例）。**ただしテーブル `sub_statuses` 自体は drop されておらず、空テーブルとしてスキーマに残ります**。実プロダクトで「迂闊に DROP しない」運用判断のミニチュアでもあります。
+途中で補助的な状態テーブルが入りますが、[`006_flat_workflow_statuses.sql`](../packages/db/lessons/b/migrations/006_flat_workflow_statuses.sql) でメイン `statuses` に寄せ、[`011_drop_sub_statuses.sql`](../packages/db/lessons/b/migrations/011_drop_sub_statuses.sql) でスキーマからも削除しています（「モデルは進化する」例）。Lesson C も同じ方針で、古い状態変更イベントは `status_change` に寄せています。
 
 **トリガーの進化:** まずステータス名で判定していたロジックを、[`009_status_schedule_trigger_settings.sql`](../packages/db/lessons/b/migrations/009_status_schedule_trigger_settings.sql) で `statuses.auto_start` / `auto_end` に寄せています。**「いつ着手・完了とみなすか」を、マイグレーションを書かずデータ（Settings）で変えられる**のがポイントです。
 
@@ -117,9 +318,9 @@ B と同じ OLTP に **`todo_events`** を追加します。
 参照: [`packages/db/lessons/c/migrations/001_schema.sql`](../packages/db/lessons/c/migrations/001_schema.sql)
 
 - **現在の真実**は `todos`（および関連）。**過去の事実**は `todo_events` に追記。`create` / `update`（PATCH の各フィールド変更）/ `label_add` / `label_remove` / `status_change` / `delete` などのイベントが、サーバ側の repository から積まれます（[`apps/server/src/todoRepo.ts`](../apps/server/src/todoRepo.ts)）。
-- `todo_events.todo_id` は `ON DELETE SET NULL` 参照なので、**TODO を物理削除しても履歴行は残ります**。
-- [`011_todo_event_project_id.sql`](../packages/db/lessons/c/migrations/011_todo_event_project_id.sql) で `todo_events.project_id` を追加し既存行を `todos` から埋めます。**TODO を消した後も「どのプロジェクトの出来事だったか」を分析できる**ための、いわゆるスナップショット（冗長だが便利）です。
-  - 完全な独立コピーではなく、`project_id` も `REFERENCES projects(id) ON DELETE SET NULL` です。**プロジェクト本体を削除すると `project_id` は NULL** になります（参照保持とスナップショットの中間設計）。
+- `todo_events` は `iteration_id` / `project_id` を持ちません。Insight は `todo_events.todo_id` から `todos` に JOIN し、現在の所属で絞り込みます。TODO の所属を後で変えた場合、過去イベントも現在の所属側に表示されます。
+- `todo_events.todo_id` は `ON DELETE SET NULL` 参照なので、**TODO を物理削除しても履歴行は残ります**。ただし所属別 Insight は現在の `todos` を基準にするため、削除済み TODO のイベントは所属フィルタの対象外です。
+- [`013_drop_todo_event_scope_columns.sql`](../packages/db/lessons/c/migrations/013_drop_todo_event_scope_columns.sql) で、以前の `todo_events.iteration_id` / `project_id` スナップショット列を削除しています。
 - イベント行の `actor` 列は環境変数 `ACTOR` を入れています（[`apps/server/src/todoRepo.ts`](../apps/server/src/todoRepo.ts)）。`docker-compose.dev.yml` では `ACTOR: docker-dev` が既定値で、replay の見え方を変えて遊べます。
 
 ---

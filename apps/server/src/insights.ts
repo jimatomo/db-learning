@@ -127,7 +127,8 @@ export function eventSummarySqlite(
     .query(
       `SELECT e.event_type AS event_type, COUNT(*) AS cnt
        FROM todo_events e
-       WHERE e.iteration_id = ?${projectId == null ? "" : " AND e.project_id = ?"}
+       JOIN todos t ON t.id = e.todo_id
+       WHERE t.iteration_id = ?${projectId == null ? "" : " AND t.project_id = ?"}
        GROUP BY e.event_type
        ORDER BY cnt DESC`,
     )
@@ -227,9 +228,10 @@ export function replaySqlite(
   const args = projectId == null ? [iterationId] : [iterationId, projectId];
   const rows = db
     .query(
-      `SELECT e.id, e.todo_id, e.event_type, e.field_name, e.from_value, e.to_value, e.occurred_at, e.actor, e.project_id
+      `SELECT e.id, e.todo_id, e.event_type, e.field_name, e.from_value, e.to_value, e.occurred_at, e.actor, t.project_id
        FROM todo_events e
-       WHERE e.iteration_id = ?${projectId == null ? "" : " AND e.project_id = ?"}
+       JOIN todos t ON t.id = e.todo_id
+       WHERE t.iteration_id = ?${projectId == null ? "" : " AND t.project_id = ?"}
        ORDER BY e.occurred_at ASC, e.id ASC`,
     )
     .all(...args) as {
@@ -305,12 +307,13 @@ export async function duckdbEventSummary(
   projectId: number | null = null,
 ): Promise<EventSummary[]> {
   if (lesson !== "c") return [];
-  const projectClause = projectId == null ? "" : ` AND e.project_id = ${projectId}`;
+  const projectClause = projectId == null ? "" : ` AND t.project_id = ${projectId}`;
   if (insightsEngine() === "duckdb_cli" && duckdbCliAvailable()) {
     const sql = `
 SELECT e.event_type, COUNT(*)::BIGINT AS cnt
 FROM todo_events e
-WHERE e.iteration_id = ${iterationId}${projectClause}
+JOIN todos t ON t.id = e.todo_id
+WHERE t.iteration_id = ${iterationId}${projectClause}
 GROUP BY e.event_type
 ORDER BY cnt DESC;
 `;
@@ -423,12 +426,13 @@ export async function duckdbReplay(
   projectId: number | null = null,
 ): Promise<ReplayRow[]> {
   if (lesson !== "c") return [];
-  const projectClause = projectId == null ? "" : ` AND e.project_id = ${projectId}`;
+  const projectClause = projectId == null ? "" : ` AND t.project_id = ${projectId}`;
   if (insightsEngine() === "duckdb_cli" && duckdbCliAvailable()) {
     const sql = `
-SELECT e.id, e.todo_id, e.event_type, e.field_name, e.from_value, e.to_value, e.occurred_at, e.actor, e.project_id
+SELECT e.id, e.todo_id, e.event_type, e.field_name, e.from_value, e.to_value, e.occurred_at, e.actor, t.project_id
 FROM todo_events e
-WHERE e.iteration_id = ${iterationId}${projectClause}
+JOIN todos t ON t.id = e.todo_id
+WHERE t.iteration_id = ${iterationId}${projectClause}
 ORDER BY e.occurred_at ASC, e.id ASC;
 `;
     const rows = runDuckdbCliJson(sqlitePath, sql) as {

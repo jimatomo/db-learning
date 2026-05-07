@@ -178,52 +178,150 @@ function truncateEventLine(value: string) {
   return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
 }
 
-function changedNoteDiff(fromValue: string | null | undefined, toValue: string | null | undefined) {
-  const fromLines = noteLines(fromValue);
-  const toLines = noteLines(toValue);
-  let start = 0;
-  while (start < fromLines.length && start < toLines.length && fromLines[start] === toLines[start]) start++;
+type NoteDiffOp =
+  | { kind: "equal"; oldLine: number; newLine: number; value: string }
+  | { kind: "added"; line: number; value: string }
+  | { kind: "removed"; line: number; value: string };
 
-  let fromEnd = fromLines.length - 1;
-  let toEnd = toLines.length - 1;
-  while (fromEnd >= start && toEnd >= start && fromLines[fromEnd] === toLines[toEnd]) {
+function findCommonBlock(fromLines: string[], toLines: string[], fromStart: number, fromEnd: number, toStart: number, toEnd: number) {
+  let best = { fromIndex: fromStart, toIndex: toStart, length: 0 };
+  const lengths: number[][] = Array.from({ length: fromEnd - fromStart + 1 }, () => Array(toEnd - toStart + 1).fill(0));
+
+  for (let i = fromEnd - 1; i >= fromStart; i--) {
+    for (let j = toEnd - 1; j >= toStart; j--) {
+      if (fromLines[i] !== toLines[j]) continue;
+      const length = lengths[i - fromStart + 1][j - toStart + 1] + 1;
+      lengths[i - fromStart][j - toStart] = length;
+      const currentDistance = Math.abs(i - j);
+      const bestDistance = Math.abs(best.fromIndex - best.toIndex);
+      if (
+        length > best.length ||
+        (length === best.length && (currentDistance < bestDistance || (currentDistance === bestDistance && i + j < best.fromIndex + best.toIndex)))
+      ) {
+        best = { fromIndex: i, toIndex: j, length };
+      }
+    }
+  }
+
+  return best.length > 0 ? best : null;
+}
+
+function lineDiffRange(
+  fromLines: string[],
+  toLines: string[],
+  fromStart: number,
+  fromEnd: number,
+  toStart: number,
+  toEnd: number,
+): NoteDiffOp[] {
+  const common = findCommonBlock(fromLines, toLines, fromStart, fromEnd, toStart, toEnd);
+  if (!common) {
+    return [
+      ...fromLines.slice(fromStart, fromEnd).map((value, index) => ({ kind: "removed" as const, line: fromStart + index + 1, value })),
+      ...toLines.slice(toStart, toEnd).map((value, index) => ({ kind: "added" as const, line: toStart + index + 1, value })),
+    ];
+  }
+
+  return [
+    ...lineDiffRange(fromLines, toLines, fromStart, common.fromIndex, toStart, common.toIndex),
+    ...fromLines
+      .slice(common.fromIndex, common.fromIndex + common.length)
+      .map((value, index) => ({ kind: "equal" as const, oldLine: common.fromIndex + index + 1, newLine: common.toIndex + index + 1, value })),
+    ...lineDiffRange(
+      fromLines,
+      toLines,
+      common.fromIndex + common.length,
+      fromEnd,
+      common.toIndex + common.length,
+      toEnd,
+    ),
+  ];
+}
+
+function lineDiff(fromLines: string[], toLines: string[]): NoteDiffOp[] {
+  if (fromLines.length === 0) return toLines.map((value, index) => ({ kind: "added" as const, line: index + 1, value }));
+  if (toLines.length === 0) return fromLines.map((value, index) => ({ kind: "removed" as const, line: index + 1, value }));
+  const ops: NoteDiffOp[] = [];
+  let start = 0;
+  while (start < fromLines.length && start < toLines.length && fromLines[start] === toLines[start]) {
+    ops.push({ kind: "equal", oldLine: start + 1, newLine: start + 1, value: fromLines[start] });
+    start++;
+  }
+
+  let fromEnd = fromLines.length;
+  let toEnd = toLines.length;
+  const suffix: NoteDiffOp[] = [];
+  while (fromEnd > start && toEnd > start && fromLines[fromEnd - 1] === toLines[toEnd - 1]) {
+    suffix.unshift({ kind: "equal", oldLine: fromEnd, newLine: toEnd, value: fromLines[fromEnd - 1] });
     fromEnd--;
     toEnd--;
   }
 
-  const removed = fromEnd >= start ? fromLines.slice(start, fromEnd + 1) : [];
-  const added = toEnd >= start ? toLines.slice(start, toEnd + 1) : [];
-  const changed = Math.min(removed.length, added.length);
-  const addedOnly = Math.max(0, added.length - changed);
-  const removedOnly = Math.max(0, removed.length - changed);
+  return [...ops, ...lineDiffRange(fromLines, toLines, start, fromEnd, start, toEnd), ...suffix];
+}
+
+function changedNoteDiff(fromValue: string | null | undefined, toValue: string | null | undefined) {
+  const fromLines = noteLines(fromValue);
+  const toLines = noteLines(toValue);
+  const ops = lineDiff(fromLines, toLines);
   const previewLimit = 8;
   const preview: { kind: "changed" | "added" | "removed"; line: number; from?: string; to?: string }[] = [];
+  let changed = 0;
+  let addedOnly = 0;
+  let removedOnly = 0;
+  let startLine = 1;
+  let sawChange = false;
 
-  for (let i = 0; i < changed && preview.length < previewLimit; i++) {
-    preview.push({
-      kind: "changed",
-      line: start + i + 1,
-      from: truncateEventLine(removed[i]),
-      to: truncateEventLine(added[i]),
-    });
-  }
-  for (let i = changed; i < added.length && preview.length < previewLimit; i++) {
-    preview.push({ kind: "added", line: start + i + 1, to: truncateEventLine(added[i]) });
-  }
-  for (let i = changed; i < removed.length && preview.length < previewLimit; i++) {
-    preview.push({ kind: "removed", line: start + i + 1, from: truncateEventLine(removed[i]) });
+  for (let index = 0; index < ops.length; index++) {
+    if (ops[index].kind === "equal") continue;
+
+    const block: NoteDiffOp[] = [];
+    while (index < ops.length && ops[index].kind !== "equal") {
+      block.push(ops[index]);
+      index++;
+    }
+    index--;
+
+    const firstLine = block[0].kind === "added" || block[0].kind === "removed" ? block[0].line : 1;
+    if (!sawChange) {
+      startLine = firstLine;
+      sawChange = true;
+    }
+
+    const removed = block.filter((op): op is Extract<NoteDiffOp, { kind: "removed" }> => op.kind === "removed");
+    const added = block.filter((op): op is Extract<NoteDiffOp, { kind: "added" }> => op.kind === "added");
+    const changedInBlock = Math.min(removed.length, added.length);
+    for (let i = 0; i < changedInBlock; i++) {
+      changed++;
+      if (preview.length < previewLimit) {
+        preview.push({
+          kind: "changed",
+          line: added[i].line,
+          from: truncateEventLine(removed[i].value),
+          to: truncateEventLine(added[i].value),
+        });
+      }
+    }
+    for (let i = changedInBlock; i < added.length; i++) {
+      addedOnly++;
+      if (preview.length < previewLimit) preview.push({ kind: "added", line: added[i].line, to: truncateEventLine(added[i].value) });
+    }
+    for (let i = changedInBlock; i < removed.length; i++) {
+      removedOnly++;
+      if (preview.length < previewLimit) preview.push({ kind: "removed", line: removed[i].line, from: truncateEventLine(removed[i].value) });
+    }
   }
 
   const summaryParts = [];
   if (addedOnly) summaryParts.push(`+${addedOnly}`);
   if (removedOnly) summaryParts.push(`-${removedOnly}`);
   if (changed) summaryParts.push(`~${changed}`);
-  const summary = `note ${summaryParts.length ? summaryParts.join(" ") : "updated"} at L${start + 1}`;
+  const summary = `note ${summaryParts.length ? summaryParts.join(" ") : "updated"} at L${startLine}`;
 
   return {
     format: "note-diff/v1",
     summary,
-    startLine: start + 1,
+    startLine,
     stats: {
       added: addedOnly,
       removed: removedOnly,
@@ -232,7 +330,7 @@ function changedNoteDiff(fromValue: string | null | undefined, toValue: string |
       toLines: toLines.length,
     },
     preview,
-    truncated: removed.length + added.length > previewLimit,
+    truncated: changed + addedOnly + removedOnly > previewLimit,
   };
 }
 

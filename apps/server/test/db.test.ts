@@ -274,6 +274,114 @@ describe("lesson c events", () => {
     db.close();
   });
 
+  test("note diffs keep inserted lines from shifting later edits", () => {
+    const { db } = openLesson("c");
+    db.run(`INSERT INTO iterations (name, sort_order) VALUES ('S1',0)`);
+    const iterationId = (db.query(`SELECT id FROM iterations LIMIT 1`).get() as { id: number }).id;
+    const sid = (db.query(`SELECT id FROM statuses WHERE name='todo' LIMIT 1`).get() as { id: number }).id;
+    const created = todoRepo.createTodo(db, "c", {
+      title: "note insert event",
+      description: "heading\nline a\nline b\nline c\nfooter",
+      statusId: sid,
+      iterationId,
+    });
+
+    todoRepo.updateTodo(db, "c", created.id, {
+      description: "heading\ninserted context\nline a\nline b\nchanged c\nfooter",
+    });
+
+    const event = replaySqlite(db, "c", iterationId).find((item) => item.fieldName === "description");
+    expect(event).toMatchObject({
+      todoId: created.id,
+      eventType: "update",
+      fromValue: "note +1 ~1 at L2",
+    });
+    const noteDiff = JSON.parse(event?.toValue ?? "{}");
+    expect(noteDiff).toMatchObject({
+      format: "note-diff/v1",
+      summary: "note +1 ~1 at L2",
+      startLine: 2,
+      stats: { added: 1, removed: 0, changed: 1, fromLines: 5, toLines: 6 },
+      preview: [
+        { kind: "added", line: 2, to: "inserted context" },
+        { kind: "changed", line: 5, from: "line c", to: "changed c" },
+      ],
+      truncated: false,
+    });
+    db.close();
+  });
+
+  test("note diffs do not mark unchanged middle lines between two edits", () => {
+    const { db } = openLesson("c");
+    db.run(`INSERT INTO iterations (name, sort_order) VALUES ('S1',0)`);
+    const iterationId = (db.query(`SELECT id FROM iterations LIMIT 1`).get() as { id: number }).id;
+    const sid = (db.query(`SELECT id FROM statuses WHERE name='todo' LIMIT 1`).get() as { id: number }).id;
+    const created = todoRepo.createTodo(db, "c", {
+      title: "note two edits event",
+      description: "- [ ] top task\n\nshared detail a\nshared detail b\nshared detail c\n\n- [ ] bottom task",
+      statusId: sid,
+      iterationId,
+    });
+
+    todoRepo.updateTodo(db, "c", created.id, {
+      description: "- [x] top task\n\nshared detail a\nshared detail b\nshared detail c\n\n- [x] bottom task",
+    });
+
+    const event = replaySqlite(db, "c", iterationId).find((item) => item.fieldName === "description");
+    expect(event).toMatchObject({
+      todoId: created.id,
+      eventType: "update",
+      fromValue: "note ~2 at L1",
+    });
+    const noteDiff = JSON.parse(event?.toValue ?? "{}");
+    expect(noteDiff).toMatchObject({
+      format: "note-diff/v1",
+      summary: "note ~2 at L1",
+      startLine: 1,
+      stats: { added: 0, removed: 0, changed: 2, fromLines: 7, toLines: 7 },
+      preview: [
+        { kind: "changed", line: 1, from: "- [ ] top task", to: "- [x] top task" },
+        { kind: "changed", line: 7, from: "- [ ] bottom task", to: "- [x] bottom task" },
+      ],
+      truncated: false,
+    });
+    db.close();
+  });
+
+  test("note diffs do not report identical lines inside a separated edit block", () => {
+    const { db } = openLesson("c");
+    db.run(`INSERT INTO iterations (name, sort_order) VALUES ('S1',0)`);
+    const iterationId = (db.query(`SELECT id FROM iterations LIMIT 1`).get() as { id: number }).id;
+    const sid = (db.query(`SELECT id FROM statuses WHERE name='todo' LIMIT 1`).get() as { id: number }).id;
+    const created = todoRepo.createTodo(db, "c", {
+      title: "note repeated blocks event",
+      description: "REST + transactions\nあ\n\nadd\n\nい\n- [ ] u\n- e\n```\no\n```\n\nadd3",
+      statusId: sid,
+      iterationId,
+    });
+
+    todoRepo.updateTodo(db, "c", created.id, {
+      description: "REST + transactions\nあ\n\nadd2\n\nい\n- [ ] u\n- e\n```\no\n```\n\nadd3",
+    });
+
+    const event = replaySqlite(db, "c", iterationId).find((item) => item.fieldName === "description");
+    expect(event).toMatchObject({
+      todoId: created.id,
+      eventType: "update",
+      fromValue: "note ~1 at L4",
+    });
+    const noteDiff = JSON.parse(event?.toValue ?? "{}");
+    expect(noteDiff).toMatchObject({
+      format: "note-diff/v1",
+      summary: "note ~1 at L4",
+      startLine: 4,
+      stats: { added: 0, removed: 0, changed: 1, fromLines: 13, toLines: 13 },
+      preview: [{ kind: "changed", line: 4, from: "add", to: "add2" }],
+      truncated: false,
+    });
+    db.close();
+  });
+
   test("full autosave payload with unchanged values does not write noise events", () => {
     const { db } = openLesson("c");
     db.run(`INSERT INTO iterations (name, sort_order) VALUES ('S1',0)`);

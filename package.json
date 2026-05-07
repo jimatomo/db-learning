@@ -6,11 +6,8 @@
     "dev": "docker compose -f docker-compose.dev.yml up --build",
     "dev:app": "concurrently -n api,web -c blue,magenta \"bun run --cwd apps/server dev\" \"bun run --cwd apps/web dev\"",
     "dev:down": "docker compose -f docker-compose.dev.yml down",
-    "build": "docker compose build",
-    "start": "docker compose up --build",
     "seed": "docker compose -f docker-compose.dev.yml run --rm --entrypoint bun dev run --cwd apps/server scripts/seed.ts",
-    "test": "docker compose -f docker-compose.dev.yml run --rm --entrypoint bun dev test apps/server/test/db.test.ts",
-    "test:e2e": "docker compose -f docker-compose.e2e.yml up --build --abort-on-container-exit --exit-code-from e2e; docker compose -f docker-compose.e2e.yml down"
+    "test": "docker compose -f docker-compose.dev.yml run --rm --entrypoint bun dev test apps/server/test/db.test.ts"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

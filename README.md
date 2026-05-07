@@ -20,25 +20,33 @@ docker compose -f docker-compose.dev.yml up --build
 Lesson を変える例（DB ファイルも合わせる）:
 
 ```sh
-LESSON=a DATABASE_PATH=/data/app-a.db docker compose -f docker-compose.dev.yml up --build
+make lesson-a
+make lesson-b
+make lesson-c
+```
+
+既定の `make dev` は Lesson C で起動します。任意の Lesson / DB パスを明示したい場合は次のようにも起動できます。
+
+```sh
+make dev LESSON=a DATABASE_PATH=/data/app-a.db
 ```
 
 停止:
 
 ```sh
-docker compose -f docker-compose.dev.yml down
+make dev-down
 ```
 
 ### Makefile（ホストに Node / Bun 不要）
 
 ```sh
 make dev           # 開発サーバ起動
+make lesson-a      # Lesson A に切り替えて起動
+make lesson-b      # Lesson B に切り替えて起動
+make lesson-c      # Lesson C に切り替えて起動
 make dev-down
 make seed
 make test
-make test-e2e
-make build         # 本番イメージを build
-make start         # docker compose up（本番）
 make clean-host-modules
 ```
 
@@ -69,28 +77,8 @@ npm run seed
 
 ```sh
 # ユニット（DB / migration）
-docker compose -f docker-compose.dev.yml run --rm --entrypoint bun dev test apps/server/test/db.test.ts
-
-# E2E（本番イメージ + Playwright 専用イメージ）
-docker compose -f docker-compose.e2e.yml up --build --abort-on-container-exit --exit-code-from e2e
-docker compose -f docker-compose.e2e.yml down
+make test
 ```
-
-`@playwright/test` は **Dockerfile.e2e** 内でのみ追加し、ホストの依存には含めていません。
-
-## 本番用コンテナ（単一）
-
-```sh
-docker compose up --build
-```
-
-- [http://localhost:8080](http://localhost:8080)
-- 永続化: 名前付きボリューム `db_data` → `/data`
-- 初回シード: `RUN_SEED=1`（`[docker-compose.yml](docker-compose.yml)`）
-
-## フロントの LESSON 表示
-
-`[apps/web/.env.production](apps/web/.env.production)` の `VITE_LESSON` を本番ビルドに埋め込みます。サーバの `LESSON` と揃えてください。
 
 ## インサイト / DuckDB
 

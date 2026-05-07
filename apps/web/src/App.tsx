@@ -87,7 +87,7 @@ function AppNav({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 export default function App() {
-  const fallbackLesson = (import.meta.env.VITE_LESSON ?? "c") as Lesson;
+  const fallbackLesson = "c" as Lesson;
   const [opened, { toggle, close }] = useDisclosure(false);
   const { data: meta } = useQuery({ queryKey: ["lesson"], queryFn: api.lesson });
   const { data: projects = [] } = useQuery({ queryKey: ["projects"], queryFn: api.projects });

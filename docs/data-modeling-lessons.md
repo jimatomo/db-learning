@@ -51,14 +51,15 @@
 
 ### Docker 開発での推奨
 
-`docker-compose.dev.yml` では既定で `LESSON=c` と `DATABASE_PATH=/data/app-c.db` です。**Lesson を変えるときは `LESSON` と `DATABASE_PATH` をセットで変えてください**（README の例と同じ）。
+Lesson の切り替えは Makefile のターゲットを使うのが推奨です。`LESSON` と `DATABASE_PATH` は Makefile 側で揃えて渡すため、通常は直接 `docker compose` に環境変数を並べる必要はありません。
 
 ```sh
-# 例: Lesson A
-LESSON=a DATABASE_PATH=/data/app-a.db docker compose -f docker-compose.dev.yml up --build
+make lesson-a
+make lesson-b
+make lesson-c
 ```
 
-Lesson を切り替える前に `docker compose -f docker-compose.dev.yml down` してから、別の `LESSON` / `DATABASE_PATH` で起動し直すと混乱しにくいです。
+各ターゲットは既存の開発スタックを止めてから、対応する Lesson と DB ファイルで起動し直します。既定の `make dev` は Lesson C で起動します。
 
 - ブラウザ: **http://localhost:5173**
 - API（ホスト直）: **http://localhost:3001**（既定ポート。`DEV_API_PORT` で変更可）
@@ -326,24 +327,21 @@ B と同じ OLTP に **`todo_events`** を追加します。
 
 ### 0. 共通準備
 
-1. リポジトリルートで Docker を起動（例は Lesson A）。
+1. リポジトリルートで、体験したい Lesson の開発スタックを起動。
 
    ```sh
-   LESSON=a DATABASE_PATH=/data/app-a.db docker compose -f docker-compose.dev.yml up --build
+   make lesson-a
+   make lesson-b
+   make lesson-c
    ```
 
 2. ブラウザで **http://localhost:5173** を開く。
-3. （任意）シードを入れてサンプルデータを見る。起動した Lesson と同じ `LESSON` / `DATABASE_PATH` を `run` 側にも指定してください。
+3. （任意）シードを入れてサンプルデータを見る。起動した Lesson と同じ Lesson の `seed-*` を実行してください。
 
    ```sh
-   # Lesson A
-   LESSON=a DATABASE_PATH=/data/app-a.db docker compose -f docker-compose.dev.yml run --rm --entrypoint bun dev run --cwd apps/server scripts/seed.ts
-
-   # Lesson B
-   LESSON=b DATABASE_PATH=/data/app-b.db docker compose -f docker-compose.dev.yml run --rm --entrypoint bun dev run --cwd apps/server scripts/seed.ts
-
-   # Lesson C
-   LESSON=c DATABASE_PATH=/data/app-c.db docker compose -f docker-compose.dev.yml run --rm --entrypoint bun dev run --cwd apps/server scripts/seed.ts
+   make seed-a
+   make seed-b
+   make seed-c
    ```
 
 4. **Settings** を開き、画面上部付近の **Lesson** 表示が意図した `A` / `B` / `C` になっていることを確認する。

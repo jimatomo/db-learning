@@ -46,6 +46,9 @@ make lesson-b      # Lesson B に切り替えて起動
 make lesson-c      # Lesson C に切り替えて起動
 make dev-down
 make seed
+make seed-a        # Lesson A の DB にシード投入
+make seed-b        # Lesson B の DB にシード投入
+make seed-c        # Lesson C の DB にシード投入
 make test
 ```
 
@@ -59,6 +62,10 @@ make test
 docker compose -f docker-compose.dev.yml run --rm --entrypoint bun dev run --cwd apps/server scripts/seed.ts
 # または
 npm run seed
+# Lesson 別に実行する場合
+make seed-a
+make seed-b
+make seed-c
 ```
 
 ## テスト（Docker）

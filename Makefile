@@ -2,7 +2,7 @@ COMPOSE = docker compose -f docker-compose.dev.yml
 LESSON ?= c
 DATABASE_PATH ?= /data/app-$(LESSON).db
 
-.PHONY: dev lesson-a lesson-b lesson-c switch-lesson dev-down seed test
+.PHONY: dev lesson-a lesson-b lesson-c switch-lesson dev-down seed seed-a seed-b seed-c test
 
 dev:
 	LESSON=$(LESSON) DATABASE_PATH=$(DATABASE_PATH) $(COMPOSE) up --build
@@ -25,6 +25,15 @@ dev-down:
 
 seed:
 	LESSON=$(LESSON) DATABASE_PATH=$(DATABASE_PATH) $(COMPOSE) run --rm --entrypoint bun dev run --cwd apps/server scripts/seed.ts
+
+seed-a:
+	$(MAKE) seed LESSON=a
+
+seed-b:
+	$(MAKE) seed LESSON=b
+
+seed-c:
+	$(MAKE) seed LESSON=c
 
 test:
 	$(COMPOSE) run --rm --entrypoint bun dev test apps/server/test/db.test.ts

@@ -47,23 +47,11 @@ make lesson-c      # Lesson C に切り替えて起動
 make dev-down
 make seed
 make test
-make clean-host-modules
 ```
-
-ホストで npm 経由にする場合: API＋Vite の起動は **`npm run dev`**（内部で `docker compose`）、コンテナ内だけが使うのは **`dev:app`**（`dev-entrypoint.sh` から実行）。
 
 ### Dev Container（Cursor / VS Code）
 
 `[.devcontainer/devcontainer.json](.devcontainer/devcontainer.json)` から `docker-compose.dev.yml` の `dev` サービスに接続できます。
-
-### ホストに残った node_modules を消す
-
-過去にホストで `bun install` 等した場合:
-
-```sh
-chmod +x scripts/rm-host-modules.sh
-./scripts/rm-host-modules.sh
-```
 
 ## シード（Docker）
 
@@ -76,7 +64,7 @@ npm run seed
 ## テスト（Docker）
 
 ```sh
-# ユニット（DB / migration）
+# ユニット（DB / schema）
 make test
 ```
 
@@ -96,7 +84,7 @@ make test
 | `c`    | `b` + 追記専用 `todo_events`（リプレイ・分析）     |
 
 
-SQL 断片: `[packages/db/lessons/](packages/db/lessons/)` と `[packages/db/patterns/README.md](packages/db/patterns/README.md)`
+SQL: `[packages/db/lessons/](packages/db/lessons/)` と `[packages/db/patterns/README.md](packages/db/patterns/README.md)`
 
 ## API 概要
 
@@ -105,4 +93,4 @@ SQL 断片: `[packages/db/lessons/](packages/db/lessons/)` と `[packages/db/pat
 - `GET /api/statuses` … lesson A では既存 TODO 由来 + 既定列
 - `GET /api/insights/iterations/:id` … ラベル件数・イベント種別集計
 - `GET /api/insights/iterations/:id/replay` … `todo_events` 時系列（lesson c）
-- `GET /api/lessons/:lessonId/health` … マイグレーション件数など
+- `GET /api/lessons/:lessonId/health` … 有効 Lesson と TODO 件数

@@ -1,9 +1,0 @@
-CREATE TABLE IF NOT EXISTS projects (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  sort_order INTEGER NOT NULL DEFAULT 0
-);
-
-ALTER TABLE todos ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL;
-
-CREATE INDEX IF NOT EXISTS idx_todos_project ON todos(project_id);

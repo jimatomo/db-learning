@@ -3,7 +3,7 @@ import { mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createApp } from "./app";
 import { getDatabasePath, getLesson, getPort, getStaticRoot, isProduction } from "./config";
-import { runLessonMigrations } from "./migrate";
+import { loadLessonSchema } from "./schema";
 
 const lesson = getLesson();
 const sqlitePath = getDatabasePath();
@@ -13,7 +13,7 @@ const db = new Database(sqlitePath, { create: true });
 db.run("PRAGMA foreign_keys = ON;");
 db.run("PRAGMA journal_mode=WAL;");
 db.run("PRAGMA busy_timeout = 8000;");
-runLessonMigrations(db, lesson);
+loadLessonSchema(db, lesson);
 
 const app = createApp(db, lesson, sqlitePath);
 

@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { getDatabasePath, getLesson, type Lesson } from "../src/config";
-import { runLessonMigrations } from "../src/migrate";
+import { loadLessonSchema } from "../src/schema";
 
 const lesson = getLesson();
 const path = getDatabasePath();
@@ -15,7 +15,7 @@ const db = new Database(path, { create: true });
 db.run("PRAGMA foreign_keys = ON;");
 db.run("PRAGMA journal_mode=WAL;");
 db.run("PRAGMA busy_timeout = 8000;");
-runLessonMigrations(db, lesson);
+loadLessonSchema(db, lesson);
 
 function clear(lesson: Lesson) {
   if (lesson === "c") db.run("DELETE FROM todo_events");
@@ -175,11 +175,10 @@ if (lesson === "a") {
   }
 
   if (lesson === "c") {
-    const todos = db.query(`SELECT id, title, status_id, iteration_id FROM todos ORDER BY id`).all() as {
+    const todos = db.query(`SELECT id, title, status_id FROM todos ORDER BY id`).all() as {
       id: number;
       title: string;
       status_id: number;
-      iteration_id: number | null;
     }[];
     const stById = Object.fromEntries(st.map((s) => [s.id, s.name])) as Record<number, string>;
     let n = 0;
@@ -191,38 +190,38 @@ if (lesson === "a") {
       const m3 = `-${5 + n} days`;
       db
         .query(
-          `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor, iteration_id)
-         VALUES (?, 'create', 'todo', NULL, ?, datetime('now', ?), 'seed', ?)`,
+          `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor)
+         VALUES (?, 'create', 'todo', NULL, ?, datetime('now', ?), 'seed')`,
         )
-        .run(t.id, t.title, m0, t.iteration_id);
+        .run(t.id, t.title, m0);
       const cur = stById[t.status_id]!;
       if (cur === "done") {
         db
           .query(
-            `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor, iteration_id)
-           VALUES (?, 'status_change', 'status', 'todo', 'doing', datetime('now', ?), 'seed', ?)`,
+            `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor)
+           VALUES (?, 'status_change', 'status', 'todo', 'doing', datetime('now', ?), 'seed')`,
           )
-          .run(t.id, m1, t.iteration_id);
+          .run(t.id, m1);
         db
           .query(
-            `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor, iteration_id)
-           VALUES (?, 'status_change', 'status', 'doing', 'done', datetime('now', ?), 'seed', ?)`,
+            `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor)
+           VALUES (?, 'status_change', 'status', 'doing', 'done', datetime('now', ?), 'seed')`,
           )
-          .run(t.id, m2, t.iteration_id);
+          .run(t.id, m2);
       } else if (cur === "doing") {
         db
           .query(
-            `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor, iteration_id)
-           VALUES (?, 'status_change', 'status', 'todo', 'doing', datetime('now', ?), 'seed', ?)`,
+            `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor)
+           VALUES (?, 'status_change', 'status', 'todo', 'doing', datetime('now', ?), 'seed')`,
           )
-          .run(t.id, m2, t.iteration_id);
+          .run(t.id, m2);
       } else {
         db
           .query(
-            `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor, iteration_id)
-           VALUES (?, 'label_add', 'labels', NULL, 'feature', datetime('now', ?), 'seed', ?)`,
+            `INSERT INTO todo_events (todo_id, event_type, field_name, from_value, to_value, occurred_at, actor)
+           VALUES (?, 'label_add', 'labels', NULL, 'feature', datetime('now', ?), 'seed')`,
           )
-          .run(t.id, m3, t.iteration_id);
+          .run(t.id, m3);
       }
     }
   }

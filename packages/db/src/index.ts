@@ -8,6 +8,6 @@ export function dbPackageRoot(): string {
   return join(__dirname, "..");
 }
 
-export function lessonMigrationsDir(lesson: "a" | "b" | "c"): string {
-  return join(dbPackageRoot(), "lessons", lesson, "migrations");
+export function lessonSchemaPath(lesson: "a" | "b" | "c"): string {
+  return join(dbPackageRoot(), "lessons", lesson, "schema.sql");
 }

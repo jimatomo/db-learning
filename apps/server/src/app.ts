@@ -54,14 +54,12 @@ export function createApp(db: Database, lesson: Lesson, sqlitePath: string): Hon
     const current = c.get("lesson");
     const db = c.get("db");
     const todoCount = (db.query(`SELECT COUNT(*) AS n FROM todos`).get() as { n: number }).n;
-    const migrationRows = db.query(`SELECT COUNT(*) AS n FROM schema_migrations`).all() as { n: number }[];
-    const migrationCount = migrationRows[0]?.n ?? 0;
     return c.json({
       requestedLesson: id,
       activeLesson: current,
       matches: id === current,
       todoCount,
-      migrationCount,
+      schema: `${current}/schema.sql`,
     });
   });
 

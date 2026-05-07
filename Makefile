@@ -2,7 +2,7 @@ COMPOSE = docker compose -f docker-compose.dev.yml
 LESSON ?= c
 DATABASE_PATH ?= /data/app-$(LESSON).db
 
-.PHONY: dev lesson-a lesson-b lesson-c switch-lesson dev-down seed test clean-host-modules
+.PHONY: dev lesson-a lesson-b lesson-c switch-lesson dev-down seed test
 
 dev:
 	LESSON=$(LESSON) DATABASE_PATH=$(DATABASE_PATH) $(COMPOSE) up --build
@@ -28,6 +28,3 @@ seed:
 
 test:
 	$(COMPOSE) run --rm --entrypoint bun dev test apps/server/test/db.test.ts
-
-clean-host-modules:
-	chmod +x scripts/rm-host-modules.sh && ./scripts/rm-host-modules.sh

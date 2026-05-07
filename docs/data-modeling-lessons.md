@@ -43,11 +43,11 @@
 
 参照: [`apps/server/src/config.ts`](../apps/server/src/config.ts)、[`apps/web/src/App.tsx`](../apps/web/src/App.tsx)
 
-### マイグレーション
+### スキーマ
 
-`packages/db/lessons/{a|b|c}/migrations/*.sql` が昇順で適用されます。
+`packages/db/lessons/{a|b|c}/schema.sql` が各 Lesson の完成形です。学習用に履歴ではなく現在の設計を読めるよう、段階的な migration ファイルは置いていません。
 
-参照: [`apps/server/src/migrate.ts`](../apps/server/src/migrate.ts)、[`packages/db/src/index.ts`](../packages/db/src/index.ts)
+参照: [`apps/server/src/schema.ts`](../apps/server/src/schema.ts)、[`packages/db/src/index.ts`](../packages/db/src/index.ts)
 
 ### Docker 開発での推奨
 
@@ -79,7 +79,7 @@ Lesson を切り替える前に `docker compose -f docker-compose.dev.yml down` 
 
 ## ER 図
 
-以下は各 Lesson のマイグレーションを最後まで適用した後の概念図です。`schema_migrations` はアプリのドメインモデルではないため省略しています。
+以下は各 Lesson の `schema.sql` に対応する概念図です。
 
 ### Lesson A
 
@@ -289,38 +289,33 @@ erDiagram
 
 **コア:** `iterations` と `todos`。ラベルは `labels_csv`、状態は `status` 文字列。
 
-参照: [`packages/db/lessons/a/migrations/001_schema.sql`](../packages/db/lessons/a/migrations/001_schema.sql)
+参照: [`packages/db/lessons/a/schema.sql`](../packages/db/lessons/a/schema.sql)
 
 - **メリット:** テーブルが少なく、INSERT/PATCH が単純。
 - **デメリット:** 「同じ意味の別表記」や「タグの重複表現」を DB だけでは防ぎにくい。ラベルに色や説明を持たせるにも不向き。
 
-**スケジュール自動記録（トリガー）**は `status` 列の **文字列**を `LOWER` で判定しています。判定ルールが SQL に焼き付いているため、**「どの状態名で着手扱いにするか」を変えたい場合は新しいマイグレーションが必要**です（B/C は Settings のチェックひとつで挙動が変わります — §B のトリガー進化を参照）。
-
-参照: [`packages/db/lessons/a/migrations/004_status_schedule_triggers.sql`](../packages/db/lessons/a/migrations/004_status_schedule_triggers.sql)
+**スケジュール自動記録（トリガー）**は `status` 列の **文字列**を `LOWER` で判定しています。判定ルールが SQL に焼き付いているため、**「どの状態名で着手扱いにするか」を変えたい場合は SQL の設計変更が必要**です（B/C は Settings のチェックひとつで挙動が変わります）。
 
 ### Lesson B — 正規化（マスタと関連）
 
 **コア:** `statuses`、`labels`、`todos`、`todo_labels`（TODO とラベルの M:N）。
 
-参照: [`packages/db/lessons/b/migrations/001_schema.sql`](../packages/db/lessons/b/migrations/001_schema.sql)
+参照: [`packages/db/lessons/b/schema.sql`](../packages/db/lessons/b/schema.sql)
 
 - `todos.status_id` は `statuses` への **NOT NULL 外部キー** → 存在しないステータスは保存できない。
 - ラベルはマスタ＋中間テーブル → **名前の一意性**や **TODO ごとのタグ集合**を素直に表現。
 
-途中で補助的な状態テーブルが入りますが、[`006_flat_workflow_statuses.sql`](../packages/db/lessons/b/migrations/006_flat_workflow_statuses.sql) でメイン `statuses` に寄せ、[`011_drop_sub_statuses.sql`](../packages/db/lessons/b/migrations/011_drop_sub_statuses.sql) でスキーマからも削除しています（「モデルは進化する」例）。Lesson C も同じ方針で、古い状態変更イベントは `status_change` に寄せています。
-
-**トリガーの進化:** まずステータス名で判定していたロジックを、[`009_status_schedule_trigger_settings.sql`](../packages/db/lessons/b/migrations/009_status_schedule_trigger_settings.sql) で `statuses.auto_start` / `auto_end` に寄せています。**「いつ着手・完了とみなすか」を、マイグレーションを書かずデータ（Settings）で変えられる**のがポイントです。
+状態の種類はすべて `statuses` に寄せています。`auto_start` / `auto_end` を持たせているので、**「いつ着手・完了とみなすか」を SQL の履歴追加ではなくデータ（Settings）で変えられる**のがポイントです。
 
 ### Lesson C — B ＋ イベントログ（分析・リプレイ）
 
 B と同じ OLTP に **`todo_events`** を追加します。
 
-参照: [`packages/db/lessons/c/migrations/001_schema.sql`](../packages/db/lessons/c/migrations/001_schema.sql)
+参照: [`packages/db/lessons/c/schema.sql`](../packages/db/lessons/c/schema.sql)
 
 - **現在の真実**は `todos`（および関連）。**過去の事実**は `todo_events` に追記。`create` / `update`（PATCH の各フィールド変更）/ `label_add` / `label_remove` / `status_change` / `delete` などのイベントが、サーバ側の repository から積まれます（[`apps/server/src/todoRepo.ts`](../apps/server/src/todoRepo.ts)）。
 - `todo_events` は `iteration_id` / `project_id` を持ちません。Insight は `todo_events.todo_id` から `todos` に JOIN し、現在の所属で絞り込みます。TODO の所属を後で変えた場合、過去イベントも現在の所属側に表示されます。
 - `todo_events.todo_id` は `ON DELETE SET NULL` 参照なので、**TODO を物理削除しても履歴行は残ります**。ただし所属別 Insight は現在の `todos` を基準にするため、削除済み TODO のイベントは所属フィルタの対象外です。
-- [`013_drop_todo_event_scope_columns.sql`](../packages/db/lessons/c/migrations/013_drop_todo_event_scope_columns.sql) で、以前の `todo_events.iteration_id` / `project_id` スナップショット列を削除しています。
 - イベント行の `actor` 列は環境変数 `ACTOR` を入れています（[`apps/server/src/todoRepo.ts`](../apps/server/src/todoRepo.ts)）。`docker-compose.dev.yml` では `ACTOR: docker-dev` が既定値で、replay の見え方を変えて遊べます。
 
 ---
@@ -437,7 +432,7 @@ B と同じ OLTP に **`todo_events`** を追加します。
 - ルート README（Docker・シード・API 概要）: [`README.md`](../README.md)
 - DuckDB 向けサンプル SQL: [`packages/db/patterns/insights_duckdb.sql`](../packages/db/patterns/insights_duckdb.sql)
   - 既定では Insights は SQLite で集計しますが、`INSIGHTS_ENGINE=duckdb_cli` を指定し `duckdb` CLI が PATH にあると、**同じクエリを DuckDB に切り替えて実行**できます（`sqlite_attach` 経由 / [`apps/server/src/insights.ts`](../apps/server/src/insights.ts)）。
-- マイグレーション一覧: [`packages/db/lessons/a/migrations/`](../packages/db/lessons/a/migrations/)、[`b/`](../packages/db/lessons/b/migrations/)、[`c/`](../packages/db/lessons/c/migrations/)
+- Lesson SQL: [`packages/db/lessons/a/schema.sql`](../packages/db/lessons/a/schema.sql)、[`b/schema.sql`](../packages/db/lessons/b/schema.sql)、[`c/schema.sql`](../packages/db/lessons/c/schema.sql)
 
 ---
 
@@ -447,4 +442,4 @@ B と同じ OLTP に **`todo_events`** を追加します。
 - **Lesson B** はマスタと関連で **整合性と運用**に強い。
 - **Lesson C** は **現在＋履歴** の二層で、分析・監査・リプレイに踏み込める。
 
-このドキュメントを軸に、`migrations` とアプリを行き来しながら読むと、データモデリングがプロダクトに与える影響が腹落ちしやすくなります。
+このドキュメントを軸に、`schema.sql` とアプリを行き来しながら読むと、データモデリングがプロダクトに与える影響が腹落ちしやすくなります。

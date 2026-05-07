@@ -3,8 +3,8 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { completionTimesSqlite, eventSummarySqlite, iterationTrendsSqlite, labelCountsSqlite, replaySqlite } from "../src/insights";
-import { runLessonMigrations } from "../src/migrate";
 import * as projectRepo from "../src/projectRepo";
+import { loadLessonSchema } from "../src/schema";
 import * as settingsRepo from "../src/settingsRepo";
 import * as statusRepo from "../src/statusRepo";
 import * as todoRepo from "../src/todoRepo";
@@ -24,16 +24,14 @@ function openLesson(lesson: "a" | "b" | "c") {
   const p = join(root, `${lesson}-${crypto.randomUUID()}.db`);
   const db = new Database(p, { create: true });
   db.run("PRAGMA foreign_keys = ON;");
-  runLessonMigrations(db, lesson);
+  loadLessonSchema(db, lesson);
   return { db, path: p };
 }
 
-describe("migrations", () => {
-  test("lesson a/b/c apply", () => {
+describe("lesson schemas", () => {
+  test("lesson a/b/c load", () => {
     for (const lesson of ["a", "b", "c"] as const) {
       const { db } = openLesson(lesson);
-      const n = db.query(`SELECT COUNT(*) AS n FROM schema_migrations`).get() as { n: number };
-      expect(n.n).toBeGreaterThan(0);
       const projectTable = db.query(`SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'projects'`).get() as {
         n: number;
       };

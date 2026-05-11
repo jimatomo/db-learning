@@ -1898,7 +1898,7 @@ select {
   position: relative;
   display: block;
   min-height: 2.5rem;
-  padding: 0.62rem 0.75rem 0.62rem 1.7rem;
+  padding: 0.62rem 0.75rem 0.62rem 1.85rem;
   cursor: pointer;
   font-weight: 700;
   color: var(--app-ink);
@@ -1914,8 +1914,8 @@ select {
 .markdown-details__summary::before {
   content: "▸";
   position: absolute;
-  top: 50%;
-  left: 0.75rem;
+  top: calc(50% - 1px);
+  left: 0.7rem;
   color: var(--app-muted);
   display: inline-flex;
   align-items: center;

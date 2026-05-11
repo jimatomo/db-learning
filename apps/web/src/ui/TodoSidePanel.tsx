@@ -31,9 +31,18 @@ import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPl
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $createHeadingNode, HeadingNode, QuoteNode } from "@lexical/rich-text";
+import { $createHeadingNode, $createQuoteNode, HeadingNode, type HeadingTagType, QuoteNode } from "@lexical/rich-text";
 import { $setBlocksType } from "@lexical/selection";
-import { INSERT_CHECK_LIST_COMMAND, INSERT_ORDERED_LIST_COMMAND, INSERT_UNORDERED_LIST_COMMAND, ListItemNode, ListNode } from "@lexical/list";
+import {
+  $createListItemNode,
+  $createListNode,
+  INSERT_CHECK_LIST_COMMAND,
+  INSERT_ORDERED_LIST_COMMAND,
+  INSERT_UNORDERED_LIST_COMMAND,
+  ListItemNode,
+  ListNode,
+  type ListType,
+} from "@lexical/list";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   $createParagraphNode,
@@ -56,6 +65,7 @@ import {
   KEY_ARROW_UP_COMMAND,
   KEY_BACKSPACE_COMMAND,
   KEY_DELETE_COMMAND,
+  KEY_SPACE_COMMAND,
   mergeRegister,
   type LexicalNode,
   type NodeKey,
@@ -624,6 +634,93 @@ function DetailsDeletePlugin() {
   return null;
 }
 
+type DetailsMarkdownShortcut =
+  | { kind: "heading"; marker: string; tag: HeadingTagType }
+  | { kind: "quote"; marker: string }
+  | { kind: "list"; checked?: boolean; marker: string; type: ListType };
+
+const detailsMarkdownShortcuts: DetailsMarkdownShortcut[] = [
+  { kind: "list", marker: "[]", type: "check", checked: false },
+  { kind: "list", marker: "[ ]", type: "check", checked: false },
+  { kind: "list", marker: "[x]", type: "check", checked: true },
+  { kind: "list", marker: "[X]", type: "check", checked: true },
+  { kind: "list", marker: "- [ ]", type: "check", checked: false },
+  { kind: "list", marker: "- [x]", type: "check", checked: true },
+  { kind: "list", marker: "- [X]", type: "check", checked: true },
+  { kind: "list", marker: "-", type: "bullet" },
+  { kind: "list", marker: "*", type: "bullet" },
+  { kind: "list", marker: "+", type: "bullet" },
+  { kind: "list", marker: "1.", type: "number" },
+  { kind: "heading", marker: "#", tag: "h1" },
+  { kind: "heading", marker: "##", tag: "h2" },
+  { kind: "heading", marker: "###", tag: "h3" },
+  { kind: "quote", marker: ">" },
+];
+
+function getDetailsShortcutBlock() {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
+
+  const anchorNode = selection.anchor.getNode();
+  const block = $isTextNode(anchorNode) ? anchorNode.getParent() : anchorNode;
+  if (!(block instanceof ElementNode)) return null;
+
+  const details = getDetailsAncestor(block);
+  if (!details || isInDetailsSummary(block, details)) return null;
+  if (block === details) return null;
+
+  if ($isTextNode(anchorNode) && selection.anchor.offset !== anchorNode.getTextContentSize()) return null;
+
+  return block;
+}
+
+function applyDetailsMarkdownShortcut(block: ElementNode, shortcut: DetailsMarkdownShortcut) {
+  if (shortcut.kind === "heading") {
+    const heading = $createHeadingNode(shortcut.tag);
+    block.replace(heading);
+    heading.selectEnd();
+    return;
+  }
+
+  if (shortcut.kind === "quote") {
+    const quote = $createQuoteNode();
+    block.replace(quote);
+    quote.selectEnd();
+    return;
+  }
+
+  const list = $createListNode(shortcut.type);
+  const item = $createListItemNode(shortcut.checked);
+  list.append(item);
+  block.replace(list);
+  item.selectEnd();
+}
+
+function DetailsMarkdownShortcutPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerCommand(
+      KEY_SPACE_COMMAND,
+      (event: KeyboardEvent | null) => {
+        const block = getDetailsShortcutBlock();
+        if (!block) return false;
+
+        const marker = block.getTextContent();
+        const shortcut = detailsMarkdownShortcuts.find((candidate) => candidate.marker === marker);
+        if (!shortcut) return false;
+
+        event?.preventDefault();
+        applyDetailsMarkdownShortcut(block, shortcut);
+        return true;
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+  }, [editor]);
+
+  return null;
+}
+
 function DetailsBoundaryNavigationPlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -939,6 +1036,7 @@ function MarkdownNoteEditor({
           <DetailsSummaryClickPlugin />
           <DetailsStructurePlugin />
           <DetailsDeletePlugin />
+          <DetailsMarkdownShortcutPlugin />
           <DetailsBoundaryNavigationPlugin />
           <MarkdownChangePlugin initialMarkdown={initialMarkdownRef.current} onChange={onChange} />
           <MarkdownBlurCommitPlugin onCommit={onCommit} />

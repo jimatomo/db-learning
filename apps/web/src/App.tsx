@@ -132,7 +132,7 @@ export default function App() {
       }}
     >
       <AppShell.Header>
-        <Container size="xl" h="100%">
+        <Container fluid h="100%" px={20}>
           <Group h="100%" justify="space-between" wrap="nowrap">
             <Group gap="md" wrap="nowrap">
               <Box className="brand-mark">
@@ -172,7 +172,7 @@ export default function App() {
       </Drawer>
 
       <AppShell.Main>
-        <Container size="xl" py={20}>
+        <Container fluid py={20} px={20}>
           <Routes>
             <Route
               path="/"

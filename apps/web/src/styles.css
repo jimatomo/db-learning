@@ -1639,6 +1639,20 @@ select {
   font-size: 0.88rem;
 }
 
+.markdown-editor__code--mermaid {
+  padding-top: 2.65rem;
+}
+
+.markdown-editor__code--mermaid-preview {
+  min-height: 10.5rem;
+  color: transparent;
+  caret-color: transparent;
+}
+
+.markdown-editor__code--mermaid-preview * {
+  visibility: hidden;
+}
+
 .markdown-editor__text--bold {
   font-weight: 800;
 }
@@ -1779,6 +1793,99 @@ select {
   margin-right: 0.45rem;
 }
 
+.markdown-mermaid {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid var(--app-line);
+  border-radius: 0.3rem;
+  overflow: auto;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.markdown-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.markdown-mermaid--loading {
+  justify-content: flex-start;
+  color: var(--app-muted);
+  font-size: 0.9rem;
+}
+
+.markdown-mermaid--error {
+  display: block;
+  background: #fff5f5;
+  color: #8a1f11;
+  white-space: pre-wrap;
+}
+
+.markdown-mermaid-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.markdown-mermaid-card {
+  position: absolute;
+  min-width: 15rem;
+  pointer-events: none;
+}
+
+.markdown-mermaid-card__bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-height: 2.2rem;
+  padding: 0.32rem 0.42rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.3rem 0.3rem 0 0;
+  background: rgba(26, 35, 48, 0.94);
+  color: #f7f7f7;
+  pointer-events: auto;
+}
+
+.markdown-mermaid-card__label {
+  margin-right: auto;
+  padding-left: 0.3rem;
+  color: rgba(255, 255, 255, 0.72);
+  font-family: "SFMono-Regular", "Menlo", "Monaco", monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.markdown-mermaid-card__bar .mantine-Button-root {
+  border-radius: 0.25rem;
+  font-weight: 700;
+  pointer-events: auto;
+}
+
+.markdown-mermaid-card--preview {
+  pointer-events: auto;
+}
+
+.markdown-mermaid-card--preview .markdown-mermaid-card__bar {
+  border-color: var(--app-line);
+  border-bottom: 0;
+  background: rgba(246, 247, 249, 0.96);
+  color: var(--app-ink);
+}
+
+.markdown-mermaid-card--preview .markdown-mermaid-card__label {
+  color: var(--app-muted);
+}
+
+.markdown-mermaid-card--preview .markdown-mermaid {
+  border-radius: 0 0 0.3rem 0.3rem;
+  pointer-events: auto;
+}
+
 .markdown-details {
   margin: 0 0 0.9rem;
   border: 1px solid var(--app-line);
@@ -1786,14 +1893,16 @@ select {
   background: rgba(246, 247, 249, 0.62);
 }
 
-.markdown-details summary {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.62rem 0.75rem;
+.markdown-details summary,
+.markdown-details__summary {
+  position: relative;
+  display: block;
+  min-height: 2.5rem;
+  padding: 0.62rem 0.75rem 0.62rem 1.7rem;
   cursor: pointer;
   font-weight: 700;
   color: var(--app-ink);
+  line-height: 1.25;
   list-style: none;
 }
 
@@ -1801,19 +1910,62 @@ select {
   display: none;
 }
 
-.markdown-details summary::before {
+.markdown-details summary::before,
+.markdown-details__summary::before {
   content: "▸";
+  position: absolute;
+  top: 50%;
+  left: 0.75rem;
   color: var(--app-muted);
-  font-size: 0.72rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0.75rem;
+  font-size: 1.28rem;
+  line-height: 1;
+  transform: translateY(-50%);
   transition: transform 120ms ease;
 }
 
-.markdown-details[open] summary::before {
-  transform: rotate(90deg);
+.markdown-details[open] summary::before,
+.markdown-details:not(.markdown-details--collapsed) .markdown-details__summary::before {
+  transform: translateY(-50%) rotate(90deg);
+}
+
+.markdown-details--collapsed > :not(.markdown-details__summary) {
+  display: none;
+}
+
+.markdown-details__summary:empty::after,
+.markdown-details__summary:has(> br:only-child)::after {
+  content: "タイトル";
+  color: var(--app-muted);
+  font-weight: 700;
+}
+
+.markdown-details__summary:has(> br:only-child) > br {
+  display: none;
 }
 
 .markdown-details__body {
   padding: 0 0.75rem 0.75rem 1.62rem;
+}
+
+.markdown-details--editor > :not(.markdown-details__summary) {
+  margin-right: 0.75rem;
+  margin-left: 1.62rem;
+}
+
+.markdown-details--editor > :last-child {
+  margin-bottom: 0.75rem;
+}
+
+.markdown-details--editor > .markdown-editor__paragraph:empty::before,
+.markdown-details--editor > .markdown-editor__paragraph:has(> br:only-child)::before {
+  content: "内容";
+  position: absolute;
+  color: var(--app-muted);
+  pointer-events: none;
 }
 
 .markdown-details__body > :last-child,

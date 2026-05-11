@@ -14,7 +14,13 @@ import {
 } from "@mantine/core";
 import { $createCodeNode, CodeNode } from "@lexical/code";
 import { LinkNode } from "@lexical/link";
-import { $convertFromMarkdownString, $convertToMarkdownString, CHECK_LIST, TRANSFORMERS } from "@lexical/markdown";
+import {
+  $convertFromMarkdownString,
+  $convertToMarkdownString,
+  CHECK_LIST,
+  TRANSFORMERS,
+  type MultilineElementTransformer,
+} from "@lexical/markdown";
 import { CheckListPlugin } from "@lexical/react/LexicalCheckListPlugin";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -29,8 +35,33 @@ import { $createHeadingNode, HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { $setBlocksType } from "@lexical/selection";
 import { INSERT_CHECK_LIST_COMMAND, INSERT_ORDERED_LIST_COMMAND, INSERT_UNORDERED_LIST_COMMAND, ListItemNode, ListNode } from "@lexical/list";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { $getSelection, $isRangeSelection, type EditorState, FORMAT_TEXT_COMMAND } from "lexical";
-import { type ChangeEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  $createParagraphNode,
+  $createTextNode,
+  $getNearestNodeFromDOMNode,
+  $getSelection,
+  $insertNodes,
+  $isRangeSelection,
+  $isTextNode,
+  $nodesOfType,
+  COMMAND_PRIORITY_LOW,
+  ElementNode,
+  type DOMExportOutput,
+  type EditorConfig,
+  type EditorState,
+  FORMAT_TEXT_COMMAND,
+  KEY_ARROW_DOWN_COMMAND,
+  KEY_ARROW_LEFT_COMMAND,
+  KEY_ARROW_RIGHT_COMMAND,
+  KEY_ARROW_UP_COMMAND,
+  KEY_BACKSPACE_COMMAND,
+  KEY_DELETE_COMMAND,
+  mergeRegister,
+  type LexicalNode,
+  type NodeKey,
+} from "lexical";
+import { type ChangeEvent, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, type ApiTodo, type AppTimeZone } from "../api";
 import { dateTimeInputValueToUtc, utcToDateTimeInputValue } from "../dateTime";
@@ -162,7 +193,128 @@ const lexicalTheme = {
   },
 };
 
-const markdownTransformers = [CHECK_LIST, ...TRANSFORMERS];
+class DetailsNode extends ElementNode {
+  static getType() {
+    return "details";
+  }
+
+  static clone(node: DetailsNode) {
+    return new DetailsNode(node.__key);
+  }
+
+  constructor(key: NodeKey | undefined = undefined) {
+    super(key);
+  }
+
+  createDOM(_config: EditorConfig) {
+    const details = document.createElement("div");
+    details.className = "markdown-details markdown-details--editor";
+    return details;
+  }
+
+  updateDOM() {
+    return false;
+  }
+
+  exportDOM(): DOMExportOutput {
+    const details = document.createElement("details");
+    details.className = "markdown-details";
+    return { element: details };
+  }
+}
+
+class DetailsSummaryNode extends ElementNode {
+  static getType() {
+    return "details-summary";
+  }
+
+  static clone(node: DetailsSummaryNode) {
+    return new DetailsSummaryNode(node.__key);
+  }
+
+  constructor(key: NodeKey | undefined = undefined) {
+    super(key);
+  }
+
+  createDOM(_config: EditorConfig) {
+    const summary = document.createElement("div");
+    summary.className = "markdown-details__summary";
+    summary.addEventListener("click", (event) => {
+      if (event.clientX - summary.getBoundingClientRect().left > 26) return;
+      event.preventDefault();
+      summary.parentElement?.classList.toggle("markdown-details--collapsed");
+    });
+    return summary;
+  }
+
+  updateDOM() {
+    return false;
+  }
+}
+
+function $createDetailsNode(title?: string) {
+  const details = new DetailsNode();
+  const summary = new DetailsSummaryNode();
+  const normalizedTitle = title?.trim();
+  if (normalizedTitle) summary.append($createTextNode(normalizedTitle));
+  details.append(summary);
+  return details;
+}
+
+function $isDetailsNode(node: LexicalNode | null | undefined): node is DetailsNode {
+  return node instanceof DetailsNode;
+}
+
+function $isDetailsSummaryNode(node: LexicalNode | null | undefined): node is DetailsSummaryNode {
+  return node instanceof DetailsSummaryNode;
+}
+
+const baseMarkdownTransformers = [CHECK_LIST, ...TRANSFORMERS];
+
+const DETAILS_SUMMARY_EMPTY: MultilineElementTransformer = {
+  dependencies: [DetailsSummaryNode],
+  export: (node) => ($isDetailsSummaryNode(node) ? "" : null),
+  regExpEnd: { optional: true, regExp: /^$/ },
+  regExpStart: /^$/,
+  replace: () => false,
+  type: "multiline-element",
+};
+
+const detailsBodyMarkdownTransformers = [DETAILS_SUMMARY_EMPTY, ...baseMarkdownTransformers];
+
+const DETAILS: MultilineElementTransformer = {
+  dependencies: [DetailsNode, DetailsSummaryNode],
+  export: (node) => {
+    if (!$isDetailsNode(node)) return null;
+    const firstChild = node.getFirstChild();
+    const title = $isDetailsSummaryNode(firstChild) ? firstChild.getTextContent().trim() : "";
+    const titlePart = title ? ` ${title}` : "";
+    const body = $convertToMarkdownString(detailsBodyMarkdownTransformers, node, true).replace(/^\n+/, "").trimEnd();
+    return `:::details${titlePart}\n${body}\n:::`;
+  },
+  regExpEnd: { optional: true, regExp: /^:::\s*$/ },
+  regExpStart: /^:::\s*details(?:\s+(.*))?\s*$/,
+  replace: (rootNode, children, startMatch, _endMatch, linesInBetween, isImport) => {
+    const details = $createDetailsNode(startMatch[1]);
+
+    if (children?.length) {
+      details.append(...children);
+    } else if (linesInBetween?.length) {
+      $convertFromMarkdownString(linesInBetween.join("\n"), baseMarkdownTransformers, details, true);
+    }
+
+    if (details.getChildrenSize() === 1) {
+      const paragraph = $createParagraphNode();
+      details.append(paragraph);
+    }
+
+    rootNode.append(details);
+    if (!isImport) details.selectEnd();
+  },
+  type: "multiline-element",
+};
+
+const markdownTransformers = [DETAILS, ...baseMarkdownTransformers];
 const PROPERTY_AUTOSAVE_DELAY_MS = 650;
 const NOTE_AUTOSAVE_DELAY_MS = 60_000;
 const EMPTY_TODOS: ApiTodo[] = [];
@@ -170,6 +322,9 @@ const EMPTY_PROJECTS: { id: number; name: string; sortOrder: number }[] = [];
 const EMPTY_ITERATIONS: { id: number; name: string; startsAt: string | null; endsAt: string | null; sortOrder: number }[] = [];
 const EMPTY_LABELS: { id: number; name: string; color: string }[] = [];
 const EMPTY_STATUSES: { id: number; name: string; sortOrder: number; color: string; autoStart: boolean; autoEnd: boolean }[] = [];
+
+let isMermaidInitialized = false;
+const MERMAID_TEMPLATE = "flowchart TD\n  A[Start] --> B[Done]";
 
 function normalizeMarkdownNote(value: string) {
   return value.replace(/\r\n/g, "\n").replace(/\n+$/g, "");
@@ -196,6 +351,26 @@ function MarkdownEditorToolbar() {
     });
   };
 
+  const insertMermaid = () => {
+    editor.update(() => {
+      const node = $createCodeNode("mermaid");
+      node.append($createTextNode(MERMAID_TEMPLATE));
+      $insertNodes([node]);
+    });
+    editor.focus();
+  };
+
+  const insertDetails = () => {
+    editor.update(() => {
+      const node = $createDetailsNode();
+      const paragraph = $createParagraphNode();
+      node.append(paragraph);
+      $insertNodes([node]);
+      node.selectEnd();
+    });
+    editor.focus();
+  };
+
   return (
     <Group gap={4} wrap="wrap">
       <Tooltip label="見出し">
@@ -211,6 +386,16 @@ function MarkdownEditorToolbar() {
       <Tooltip label="コードブロック">
         <ActionIcon variant="subtle" color="gray" aria-label="コードブロックを挿入" onClick={setCode}>
           {"</>"}
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="Mermaid 図">
+        <ActionIcon variant="subtle" color="gray" aria-label="Mermaid コードブロックを挿入" onClick={insertMermaid}>
+          M
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="折りたたみ">
+        <ActionIcon variant="subtle" color="gray" aria-label="折りたたみを挿入" onClick={insertDetails}>
+          ▸
         </ActionIcon>
       </Tooltip>
       <Tooltip label="箇条書き">
@@ -276,6 +461,438 @@ function MarkdownBlurCommitPlugin({ onCommit }: { onCommit: (value: string) => v
   return null;
 }
 
+function DetailsSummaryClickPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    let currentRootElement: HTMLElement | null = null;
+
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const summary = target.closest<HTMLElement>(".markdown-details__summary");
+      if (!summary) return;
+      if (event.clientX - summary.getBoundingClientRect().left <= 26) return;
+      if ((summary.textContent ?? "").trim()) return;
+
+      event.preventDefault();
+      editor.update(() => {
+        const node = $getNearestNodeFromDOMNode(summary);
+        if ($isDetailsSummaryNode(node)) node.selectEnd();
+      });
+      editor.focus();
+    };
+
+    const unregister = editor.registerRootListener((rootElement, previousRootElement) => {
+      previousRootElement?.removeEventListener("click", handleClick, true);
+      rootElement?.addEventListener("click", handleClick, true);
+      currentRootElement = rootElement;
+    });
+
+    return () => {
+      currentRootElement?.removeEventListener("click", handleClick, true);
+      unregister();
+    };
+  }, [editor]);
+
+  return null;
+}
+
+function DetailsStructurePlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerNodeTransform(DetailsNode, (node) => {
+      let firstChild = node.getFirstChild();
+      if (!$isDetailsSummaryNode(firstChild)) {
+        const summary = new DetailsSummaryNode();
+        if (firstChild) firstChild.insertBefore(summary);
+        else node.append(summary);
+        firstChild = summary;
+      }
+
+      const bodyChildren = node.getChildren().filter((child) => !$isDetailsSummaryNode(child));
+      if (bodyChildren.length === 0) {
+        node.append($createParagraphNode());
+      }
+    });
+  }, [editor]);
+
+  return null;
+}
+
+function getDetailsAncestor(node: LexicalNode) {
+  if ($isDetailsNode(node)) return node;
+  return node.getParents().find($isDetailsNode) ?? null;
+}
+
+function isInDetailsSummary(node: LexicalNode, details: DetailsNode) {
+  const summary = details.getFirstChild();
+  return $isDetailsSummaryNode(summary) && (summary === node || summary.isParentOf(node));
+}
+
+function isSelectionAtDetailsStart(details: DetailsNode) {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const node = selection.anchor.getNode();
+  if (!isInDetailsSummary(node, details)) return false;
+  if (details.getTextContentSize() === 0) return true;
+  if ($isTextNode(node)) return selection.anchor.offset === 0 && node.getPreviousSiblings().length === 0;
+  return selection.anchor.offset === 0;
+}
+
+function isSelectionAtDetailsEnd(details: DetailsNode) {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const node = selection.anchor.getNode();
+  if (!(details === node || details.isParentOf(node))) return false;
+  const last = details.getLastDescendant() ?? details;
+  if ($isTextNode(node)) return node === last && selection.anchor.offset === node.getTextContentSize();
+  return node === last && selection.anchor.offset === node.getChildrenSize();
+}
+
+function selectBeforeDetails(details: DetailsNode) {
+  const previous = details.getPreviousSibling();
+  if (previous) {
+    previous.selectEnd();
+    return;
+  }
+  const paragraph = $createParagraphNode();
+  details.insertBefore(paragraph);
+  paragraph.selectEnd();
+}
+
+function selectAfterDetails(details: DetailsNode) {
+  const next = details.getNextSibling();
+  if (next) {
+    next.selectStart();
+    return;
+  }
+  const paragraph = $createParagraphNode();
+  details.insertAfter(paragraph);
+  paragraph.selectStart();
+}
+
+function detailsHasUserContent(details: DetailsNode) {
+  return details.getTextContent().trim().length > 0;
+}
+
+function removeDetailsBlock(details: DetailsNode, direction: "before" | "after") {
+  const previous = details.getPreviousSibling();
+  const next = details.getNextSibling();
+
+  if (direction === "before" && previous) {
+    details.remove();
+    previous.selectEnd();
+    return;
+  }
+
+  if (direction === "after" && next) {
+    details.remove();
+    next.selectStart();
+    return;
+  }
+
+  const paragraph = $createParagraphNode();
+  if (direction === "before") details.insertBefore(paragraph);
+  else details.insertAfter(paragraph);
+  details.remove();
+  paragraph.selectStart();
+}
+
+function DetailsDeletePlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    const removeIfEmpty = (direction: "before" | "after") => (event: KeyboardEvent | null) => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+      const details = getDetailsAncestor(selection.anchor.getNode());
+      if (!details || detailsHasUserContent(details)) return false;
+
+      event?.preventDefault();
+      removeDetailsBlock(details, direction);
+      return true;
+    };
+
+    return mergeRegister(
+      editor.registerCommand(KEY_BACKSPACE_COMMAND, removeIfEmpty("before"), COMMAND_PRIORITY_LOW),
+      editor.registerCommand(KEY_DELETE_COMMAND, removeIfEmpty("after"), COMMAND_PRIORITY_LOW),
+    );
+  }, [editor]);
+
+  return null;
+}
+
+function DetailsBoundaryNavigationPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    const moveBefore = (event: KeyboardEvent | null) => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+      const details = getDetailsAncestor(selection.anchor.getNode());
+      if (!details || !isSelectionAtDetailsStart(details)) return false;
+      event?.preventDefault();
+      selectBeforeDetails(details);
+      return true;
+    };
+
+    const moveAfter = (event: KeyboardEvent | null) => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+      const details = getDetailsAncestor(selection.anchor.getNode());
+      if (!details || !isSelectionAtDetailsEnd(details)) return false;
+      event?.preventDefault();
+      selectAfterDetails(details);
+      return true;
+    };
+
+    return mergeRegister(
+      editor.registerCommand(KEY_ARROW_UP_COMMAND, moveBefore, COMMAND_PRIORITY_LOW),
+      editor.registerCommand(KEY_ARROW_LEFT_COMMAND, moveBefore, COMMAND_PRIORITY_LOW),
+      editor.registerCommand(KEY_ARROW_DOWN_COMMAND, moveAfter, COMMAND_PRIORITY_LOW),
+      editor.registerCommand(KEY_ARROW_RIGHT_COMMAND, moveAfter, COMMAND_PRIORITY_LOW),
+    );
+  }, [editor]);
+
+  return null;
+}
+
+type MermaidBlock = {
+  code: string;
+  key: string;
+  left: number;
+  top: number;
+  width: number;
+};
+
+function MermaidDiagram({ chart }: { chart: string }) {
+  const rawId = useId();
+  const diagramId = useMemo(() => `todo-note-mermaid-${rawId.replace(/[^a-zA-Z0-9_-]/g, "")}`, [rawId]);
+  const [rendered, setRendered] = useState<{ svg: string | null; error: string | null }>({ svg: null, error: null });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function renderDiagram() {
+      try {
+        const mermaid = (await import("mermaid")).default;
+        if (!isMermaidInitialized) {
+          mermaid.initialize({
+            securityLevel: "strict",
+            startOnLoad: false,
+            theme: "neutral",
+          });
+          isMermaidInitialized = true;
+        }
+        const { svg } = await mermaid.render(diagramId, chart);
+        if (!cancelled) setRendered({ svg, error: null });
+      } catch (error) {
+        if (!cancelled) setRendered({ svg: null, error: error instanceof Error ? error.message : "Mermaid の描画に失敗しました" });
+      }
+    }
+
+    setRendered({ svg: null, error: null });
+    void renderDiagram();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chart, diagramId]);
+
+  if (rendered.error) {
+    return (
+      <pre className="markdown-mermaid markdown-mermaid--error">
+        <code>{rendered.error}</code>
+      </pre>
+    );
+  }
+
+  if (!rendered.svg) {
+    return <div className="markdown-mermaid markdown-mermaid--loading">Rendering Mermaid diagram...</div>;
+  }
+
+  return <div className="markdown-mermaid" dangerouslySetInnerHTML={{ __html: rendered.svg }} />;
+}
+
+function MermaidBlockPreviewPlugin() {
+  const [editor] = useLexicalComposerContext();
+  const [blocks, setBlocks] = useState<MermaidBlock[]>([]);
+  const [previewKeys, setPreviewKeys] = useState<Set<string>>(() => new Set());
+  const previewKeysRef = useRef(previewKeys);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    previewKeysRef.current = previewKeys;
+  }, [previewKeys]);
+
+  const refreshBlocks = useCallback(() => {
+    const root = editor.getRootElement();
+    const container = root?.closest<HTMLElement>(".markdown-editor__body--lexical");
+    if (!root || !container) {
+      setBlocks([]);
+      return;
+    }
+
+    const specs: { code: string; key: string }[] = [];
+    editor.getEditorState().read(() => {
+      for (const node of $nodesOfType(CodeNode)) {
+        if (node.getLanguage() === "mermaid") {
+          specs.push({ code: node.getTextContent(), key: node.getKey() });
+        }
+      }
+    });
+
+    const liveKeys = new Set(specs.map((spec) => spec.key));
+    for (const element of root.querySelectorAll<HTMLElement>(".markdown-editor__code--mermaid")) {
+      const key = element.dataset.lexicalMermaidKey;
+      if (!key || !liveKeys.has(key)) {
+        element.classList.remove("markdown-editor__code--mermaid", "markdown-editor__code--mermaid-preview");
+        delete element.dataset.lexicalMermaidKey;
+      }
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const nextBlocks = specs.flatMap((spec) => {
+      const element = editor.getElementByKey(spec.key);
+      if (!element) return [];
+
+      element.classList.add("markdown-editor__code--mermaid");
+      element.classList.toggle("markdown-editor__code--mermaid-preview", previewKeysRef.current.has(spec.key));
+      element.dataset.lexicalMermaidKey = spec.key;
+
+      const rect = element.getBoundingClientRect();
+      return [
+        {
+          ...spec,
+          left: rect.left - containerRect.left + container.scrollLeft,
+          top: rect.top - containerRect.top + container.scrollTop,
+          width: rect.width,
+        },
+      ];
+    });
+
+    setBlocks(nextBlocks);
+  }, [editor]);
+
+  const scheduleRefresh = useCallback(() => {
+    if (rafRef.current != null) window.cancelAnimationFrame(rafRef.current);
+    rafRef.current = window.requestAnimationFrame(() => {
+      rafRef.current = null;
+      refreshBlocks();
+    });
+  }, [refreshBlocks]);
+
+  useEffect(() => {
+    scheduleRefresh();
+  }, [previewKeys, scheduleRefresh]);
+
+  useEffect(() => {
+    const syncPreviewHeights = () => {
+      for (const block of blocks) {
+        const element = editor.getElementByKey(block.key);
+        if (!element) continue;
+
+        if (!previewKeys.has(block.key)) {
+          element.style.minHeight = "";
+          continue;
+        }
+
+        const card = document.querySelector<HTMLElement>(`[data-mermaid-card-key="${block.key}"]`);
+        if (card) element.style.minHeight = `${Math.ceil(card.getBoundingClientRect().height)}px`;
+      }
+    };
+
+    syncPreviewHeights();
+    const observer = new ResizeObserver(syncPreviewHeights);
+    for (const block of blocks) {
+      const card = document.querySelector<HTMLElement>(`[data-mermaid-card-key="${block.key}"]`);
+      if (card) observer.observe(card);
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [blocks, editor, previewKeys]);
+
+  useEffect(() => {
+    const unregisterUpdate = editor.registerUpdateListener(() => {
+      scheduleRefresh();
+    });
+    const unregisterRoot = editor.registerRootListener((rootElement, previousRootElement) => {
+      const previousContainer = previousRootElement?.closest<HTMLElement>(".markdown-editor__body--lexical");
+      const nextContainer = rootElement?.closest<HTMLElement>(".markdown-editor__body--lexical");
+      previousContainer?.removeEventListener("scroll", scheduleRefresh);
+      nextContainer?.addEventListener("scroll", scheduleRefresh);
+      scheduleRefresh();
+    });
+    window.addEventListener("resize", scheduleRefresh);
+
+    return () => {
+      unregisterUpdate();
+      unregisterRoot();
+      window.removeEventListener("resize", scheduleRefresh);
+      if (rafRef.current != null) window.cancelAnimationFrame(rafRef.current);
+    };
+  }, [editor, scheduleRefresh]);
+
+  const container = editor.getRootElement()?.closest<HTMLElement>(".markdown-editor__body--lexical") ?? null;
+  if (!container || blocks.length === 0) return null;
+
+  return createPortal(
+    <div className="markdown-mermaid-layer">
+      {blocks.map((block) => {
+        const isPreview = previewKeys.has(block.key);
+        return (
+          <div
+            key={block.key}
+            data-mermaid-card-key={block.key}
+            className={`markdown-mermaid-card${isPreview ? " markdown-mermaid-card--preview" : ""}`}
+            style={{ left: block.left, top: block.top, width: block.width }}
+          >
+            <div className="markdown-mermaid-card__bar">
+              <span className="markdown-mermaid-card__label">Mermaid</span>
+              <Group gap={4} wrap="nowrap">
+                <Button
+                  size="compact-xs"
+                  variant={!isPreview ? "filled" : "subtle"}
+                  color="gray"
+                  onClick={() =>
+                    setPreviewKeys((current) => {
+                      const next = new Set(current);
+                      next.delete(block.key);
+                      return next;
+                    })
+                  }
+                >
+                  編集
+                </Button>
+                <Button
+                  size="compact-xs"
+                  variant={isPreview ? "filled" : "subtle"}
+                  color="gray"
+                  onClick={() =>
+                    setPreviewKeys((current) => {
+                      const next = new Set(current);
+                      next.add(block.key);
+                      return next;
+                    })
+                  }
+                >
+                  プレビュー
+                </Button>
+              </Group>
+            </div>
+            {isPreview ? <MermaidDiagram chart={block.code} /> : null}
+          </div>
+        );
+      })}
+    </div>,
+    container,
+  );
+}
+
 function MarkdownNoteEditor({
   value,
   onChange,
@@ -292,7 +909,7 @@ function MarkdownNoteEditor({
         $convertFromMarkdownString(initialMarkdownRef.current || "", markdownTransformers, undefined, true);
       },
       namespace: "TodoNotesEditor",
-      nodes: [HeadingNode, QuoteNode, ListNode, ListItemNode, CodeNode, LinkNode],
+      nodes: [HeadingNode, QuoteNode, ListNode, ListItemNode, CodeNode, LinkNode, DetailsNode, DetailsSummaryNode],
       onError(error: Error) {
         throw error;
       },
@@ -309,7 +926,9 @@ function MarkdownNoteEditor({
         </div>
         <div className="markdown-editor__body markdown-editor__body--inline markdown-editor__body--lexical">
           <RichTextPlugin
-            contentEditable={<ContentEditable className="markdown-editor__lexical-input" aria-placeholder="# Context" />}
+            contentEditable={
+              <ContentEditable className="markdown-editor__lexical-input" aria-placeholder="# Context" placeholder={() => null} />
+            }
             placeholder={<div className="markdown-editor__lexical-placeholder"># Context</div>}
             ErrorBoundary={LexicalErrorBoundary}
           />
@@ -317,8 +936,13 @@ function MarkdownNoteEditor({
           <ListPlugin />
           <CheckListPlugin />
           <MarkdownShortcutPlugin transformers={markdownTransformers} />
+          <DetailsSummaryClickPlugin />
+          <DetailsStructurePlugin />
+          <DetailsDeletePlugin />
+          <DetailsBoundaryNavigationPlugin />
           <MarkdownChangePlugin initialMarkdown={initialMarkdownRef.current} onChange={onChange} />
           <MarkdownBlurCommitPlugin onCommit={onCommit} />
+          <MermaidBlockPreviewPlugin />
         </div>
       </div>
     </LexicalComposer>
@@ -416,7 +1040,7 @@ export default function TodoSidePanel({ opened, onClose, selectedProjectId, todo
     onClose();
   };
 
-  const handleTodoLinkClick = async (event: MouseEvent<HTMLAnchorElement>) => {
+  const handleTodoLinkClick = async (event: ReactMouseEvent<HTMLAnchorElement>) => {
     if (!todo || location.pathname === todoUrl) return;
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
@@ -881,7 +1505,7 @@ export default function TodoSidePanel({ opened, onClose, selectedProjectId, todo
             <Group justify="space-between" align="center">
               <Text className="todo-sidepanel__section-title">Notes</Text>
               <Text size="xs" c="dimmed">
-                # + Space で見出し / [] + Space でチェックリスト / Enter でリスト継続
+                # + Space で見出し / [] + Space でチェックリスト / :::details + Enter で折りたたみ
               </Text>
             </Group>
             {!isEditing || hydratedTodoId === todo?.id ? (

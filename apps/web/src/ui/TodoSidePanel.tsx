@@ -36,6 +36,7 @@ import { $setBlocksType } from "@lexical/selection";
 import {
   $createListItemNode,
   $createListNode,
+  $isListItemNode,
   INSERT_CHECK_LIST_COMMAND,
   INSERT_ORDERED_LIST_COMMAND,
   INSERT_UNORDERED_LIST_COMMAND,
@@ -59,6 +60,7 @@ import {
   type EditorConfig,
   type EditorState,
   FORMAT_TEXT_COMMAND,
+  INDENT_CONTENT_COMMAND,
   KEY_ARROW_DOWN_COMMAND,
   KEY_ARROW_LEFT_COMMAND,
   KEY_ARROW_RIGHT_COMMAND,
@@ -66,7 +68,9 @@ import {
   KEY_BACKSPACE_COMMAND,
   KEY_DELETE_COMMAND,
   KEY_SPACE_COMMAND,
+  KEY_TAB_COMMAND,
   mergeRegister,
+  OUTDENT_CONTENT_COMMAND,
   type LexicalNode,
   type NodeKey,
 } from "lexical";
@@ -756,6 +760,53 @@ function DetailsBoundaryNavigationPlugin() {
   return null;
 }
 
+function getListItemAncestor(node: LexicalNode) {
+  let current: LexicalNode | null = node;
+  while (current) {
+    if ($isListItemNode(current)) return current;
+    current = current.getParent();
+  }
+  return null;
+}
+
+function getEventListItem(event: KeyboardEvent | null) {
+  const target = event?.target;
+  if (!(target instanceof Node)) return null;
+
+  const node = $getNearestNodeFromDOMNode(target);
+  return node ? getListItemAncestor(node) : null;
+}
+
+function getTabIndentTarget(event: KeyboardEvent | null) {
+  const selection = $getSelection();
+  const eventListItem = getEventListItem(event);
+  if (!$isRangeSelection(selection)) return eventListItem;
+
+  if (getListItemAncestor(selection.anchor.getNode()) || getListItemAncestor(selection.focus.getNode())) return true;
+  return eventListItem;
+}
+
+function ListTabIndentPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerCommand(
+      KEY_TAB_COMMAND,
+      (event: KeyboardEvent | null) => {
+        const target = getTabIndentTarget(event);
+        if (!target) return false;
+
+        event?.preventDefault();
+        if (target !== true) target.selectStart();
+        return editor.dispatchCommand(event?.shiftKey ? OUTDENT_CONTENT_COMMAND : INDENT_CONTENT_COMMAND, undefined);
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+  }, [editor]);
+
+  return null;
+}
+
 type MermaidBlock = {
   code: string;
   key: string;
@@ -1038,6 +1089,7 @@ function MarkdownNoteEditor({
           <DetailsDeletePlugin />
           <DetailsMarkdownShortcutPlugin />
           <DetailsBoundaryNavigationPlugin />
+          <ListTabIndentPlugin />
           <MarkdownChangePlugin initialMarkdown={initialMarkdownRef.current} onChange={onChange} />
           <MarkdownBlurCommitPlugin onCommit={onCommit} />
           <MermaidBlockPreviewPlugin />

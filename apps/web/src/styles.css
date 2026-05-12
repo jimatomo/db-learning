@@ -1718,6 +1718,83 @@ select {
   font-size: 0.88em;
 }
 
+.markdown-admonition {
+  --admonition-accent: #2f6fed;
+  --admonition-bg: rgba(47, 111, 237, 0.08);
+  --admonition-border: rgba(47, 111, 237, 0.24);
+  --admonition-ink: #1f4f9d;
+  position: relative;
+  margin: 0 0 0.9rem;
+  padding: 0.72rem 0.85rem 0.78rem 1rem;
+  border: 1px solid var(--admonition-border);
+  border-left: 4px solid var(--admonition-accent);
+  border-radius: 0.3rem;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--admonition-accent) 10%, transparent), transparent 42%),
+    var(--admonition-bg);
+  color: var(--app-ink);
+}
+
+.markdown-admonition::before {
+  display: block;
+  margin-bottom: 0.42rem;
+  color: var(--admonition-ink);
+  content: attr(data-admonition-icon) "  " attr(data-admonition-label);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+  pointer-events: none;
+  user-select: none;
+}
+
+.markdown-admonition > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-admonition > .markdown-editor__paragraph:empty,
+.markdown-admonition > .markdown-editor__paragraph:has(> br:only-child) {
+  position: relative;
+  min-height: 1.35rem;
+}
+
+.markdown-admonition > .markdown-editor__paragraph:empty::before,
+.markdown-admonition > .markdown-editor__paragraph:has(> br:only-child)::before {
+  content: "内容";
+  position: absolute;
+  color: color-mix(in srgb, var(--admonition-ink) 58%, white);
+  pointer-events: none;
+}
+
+.markdown-admonition--info {
+  --admonition-accent: #2f6fed;
+  --admonition-bg: rgba(47, 111, 237, 0.08);
+  --admonition-border: rgba(47, 111, 237, 0.22);
+  --admonition-ink: #1f4f9d;
+}
+
+.markdown-admonition--warn {
+  --admonition-accent: #c47a13;
+  --admonition-bg: rgba(196, 122, 19, 0.1);
+  --admonition-border: rgba(196, 122, 19, 0.24);
+  --admonition-ink: #8a520d;
+}
+
+.markdown-admonition--error {
+  --admonition-accent: #d13f3f;
+  --admonition-bg: rgba(209, 63, 63, 0.09);
+  --admonition-border: rgba(209, 63, 63, 0.24);
+  --admonition-ink: #9d2828;
+}
+
+.markdown-admonition--note {
+  --admonition-accent: #6b58d6;
+  --admonition-bg: rgba(107, 88, 214, 0.08);
+  --admonition-border: rgba(107, 88, 214, 0.22);
+  --admonition-ink: #5140aa;
+}
+
 .todo-sidepanel__section-title {
   font-size: 0.82rem;
   font-weight: 700;

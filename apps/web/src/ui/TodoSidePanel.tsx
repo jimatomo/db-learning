@@ -4,6 +4,7 @@ import {
   Button,
   Drawer,
   Group,
+  Menu,
   Modal,
   MultiSelect,
   Select,
@@ -55,6 +56,7 @@ import {
   $isRangeSelection,
   $isTextNode,
   $nodesOfType,
+  COMMAND_PRIORITY_HIGH,
   COMMAND_PRIORITY_LOW,
   ElementNode,
   type DOMExportOutput,
@@ -68,12 +70,14 @@ import {
   KEY_ARROW_UP_COMMAND,
   KEY_BACKSPACE_COMMAND,
   KEY_DELETE_COMMAND,
+  KEY_ENTER_COMMAND,
   KEY_SPACE_COMMAND,
   KEY_TAB_COMMAND,
   mergeRegister,
   OUTDENT_CONTENT_COMMAND,
   type LexicalNode,
   type NodeKey,
+  TextNode,
 } from "lexical";
 import { type ChangeEvent, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -208,6 +212,65 @@ const lexicalTheme = {
   },
 };
 
+const admonitionKinds = ["info", "warn", "error", "note"] as const;
+type AdmonitionKind = (typeof admonitionKinds)[number];
+
+const admonitionMeta: Record<AdmonitionKind, { icon: string; label: string }> = {
+  error: { icon: "🚫", label: "error" },
+  info: { icon: "ℹ️", label: "info" },
+  note: { icon: "🗒️", label: "note" },
+  warn: { icon: "⚠️", label: "warn" },
+};
+
+function isAdmonitionKind(value: string | undefined): value is AdmonitionKind {
+  return admonitionKinds.includes(value as AdmonitionKind);
+}
+
+class AdmonitionNode extends ElementNode {
+  __kind: AdmonitionKind;
+
+  static getType() {
+    return "admonition";
+  }
+
+  static clone(node: AdmonitionNode) {
+    return new AdmonitionNode(node.__kind, node.__key);
+  }
+
+  constructor(kind: AdmonitionKind = "info", key: NodeKey | undefined = undefined) {
+    super(key);
+    this.__kind = kind;
+  }
+
+  createDOM(_config: EditorConfig) {
+    const container = document.createElement("aside");
+    const meta = admonitionMeta[this.__kind];
+    container.className = `markdown-admonition markdown-admonition--${this.__kind}`;
+    container.dataset.admonitionIcon = meta.icon;
+    container.dataset.admonitionKind = this.__kind;
+    container.dataset.admonitionLabel = meta.label;
+    return container;
+  }
+
+  updateDOM() {
+    return false;
+  }
+
+  exportDOM(): DOMExportOutput {
+    const aside = document.createElement("aside");
+    const meta = admonitionMeta[this.__kind];
+    aside.className = `markdown-admonition markdown-admonition--${this.__kind}`;
+    aside.dataset.admonitionIcon = meta.icon;
+    aside.dataset.admonitionKind = this.__kind;
+    aside.dataset.admonitionLabel = meta.label;
+    return { element: aside };
+  }
+
+  getKind() {
+    return this.__kind;
+  }
+}
+
 class DetailsNode extends ElementNode {
   static getType() {
     return "details";
@@ -276,6 +339,14 @@ function $createDetailsNode(title?: string) {
   return details;
 }
 
+function $createAdmonitionNode(kind: AdmonitionKind) {
+  return new AdmonitionNode(kind);
+}
+
+function $isAdmonitionNode(node: LexicalNode | null | undefined): node is AdmonitionNode {
+  return node instanceof AdmonitionNode;
+}
+
 function $isDetailsNode(node: LexicalNode | null | undefined): node is DetailsNode {
   return node instanceof DetailsNode;
 }
@@ -295,7 +366,96 @@ const DETAILS_SUMMARY_EMPTY: MultilineElementTransformer = {
   type: "multiline-element",
 };
 
-const detailsBodyMarkdownTransformers = [DETAILS_SUMMARY_EMPTY, ...baseMarkdownTransformers];
+function $isEmptyParagraphNode(node: LexicalNode | null | undefined) {
+  return node?.getType() === "paragraph" && node.getTextContent().trim() === "";
+}
+
+function trimAdmonitionBoundaryEmptyParagraphs(admonition: AdmonitionNode) {
+  while (admonition.getChildrenSize() > 1 && $isEmptyParagraphNode(admonition.getFirstChild())) {
+    admonition.getFirstChild()?.remove();
+  }
+
+  while (admonition.getChildrenSize() > 1 && $isEmptyParagraphNode(admonition.getLastChild())) {
+    admonition.getLastChild()?.remove();
+  }
+}
+
+const ADMONITION_EMPTY_PARAGRAPH: MultilineElementTransformer = {
+  dependencies: [],
+  export: (node) => ($isEmptyParagraphNode(node) ? "" : null),
+  regExpEnd: { optional: true, regExp: /^$/ },
+  regExpStart: /^$/,
+  replace: () => false,
+  type: "multiline-element",
+};
+
+function getMarkdownContainerFence(body: string) {
+  const fenceLengths = Array.from(body.matchAll(/^:{3,}/gm), (match) => match[0].length);
+  return ":".repeat(Math.max(3, ...fenceLengths.map((length) => length + 1)));
+}
+
+function importColonFencedContainer({
+  lines,
+  rootNode,
+  startLineIndex,
+  startMatch,
+  transformer,
+}: {
+  lines: string[];
+  rootNode: ElementNode;
+  startLineIndex: number;
+  startMatch: RegExpMatchArray;
+  transformer: MultilineElementTransformer;
+}) {
+  const fenceLength = startMatch[1]?.length ?? 3;
+  const endRegExp = new RegExp(`^:{${fenceLength},}\\s*$`);
+
+  for (let lineIndex = startLineIndex + 1; lineIndex < lines.length; lineIndex += 1) {
+    const endMatch = lines[lineIndex].match(endRegExp);
+    if (!endMatch) continue;
+
+    const linesInBetween = lines.slice(startLineIndex + 1, lineIndex);
+    transformer.replace(rootNode, null, startMatch, endMatch, linesInBetween, true);
+    return [true, lineIndex] as [boolean, number];
+  }
+
+  const linesInBetween = lines.slice(startLineIndex + 1);
+  transformer.replace(rootNode, null, startMatch, null, linesInBetween, true);
+  return [true, lines.length - 1] as [boolean, number];
+}
+
+const ADMONITION: MultilineElementTransformer = {
+  dependencies: [AdmonitionNode],
+  export: (node) => {
+    if (!$isAdmonitionNode(node)) return null;
+    const body = $convertToMarkdownString(admonitionBodyMarkdownTransformers, node, true).replace(/^\n+/, "").trimEnd();
+    const fence = getMarkdownContainerFence(body);
+    return `${fence}${node.getKind()}\n${body}\n${fence}`;
+  },
+  handleImportAfterStartMatch: importColonFencedContainer,
+  regExpEnd: { optional: true, regExp: /^:{3,}\s*$/ },
+  regExpStart: /^(:{3,})\s*(info|warn|error|note)\s*$/,
+  replace: (rootNode, children, startMatch, _endMatch, linesInBetween, isImport) => {
+    const kind = isAdmonitionKind(startMatch[2]) ? startMatch[2] : "info";
+    const admonition = $createAdmonitionNode(kind);
+
+    if (children?.length) {
+      admonition.append(...children);
+    } else if (linesInBetween?.length) {
+      $convertFromMarkdownString(linesInBetween.join("\n"), admonitionBodyMarkdownTransformers, admonition, true);
+    }
+
+    trimAdmonitionBoundaryEmptyParagraphs(admonition);
+
+    if (admonition.getChildrenSize() === 0) {
+      admonition.append($createParagraphNode());
+    }
+
+    rootNode.append(admonition);
+    if (!isImport) admonition.selectEnd();
+  },
+  type: "multiline-element",
+};
 
 const DETAILS: MultilineElementTransformer = {
   dependencies: [DetailsNode, DetailsSummaryNode],
@@ -305,17 +465,19 @@ const DETAILS: MultilineElementTransformer = {
     const title = $isDetailsSummaryNode(firstChild) ? firstChild.getTextContent().trim() : "";
     const titlePart = title ? ` ${title}` : "";
     const body = $convertToMarkdownString(detailsBodyMarkdownTransformers, node, true).replace(/^\n+/, "").trimEnd();
-    return `:::details${titlePart}\n${body}\n:::`;
+    const fence = getMarkdownContainerFence(body);
+    return `${fence}details${titlePart}\n${body}\n${fence}`;
   },
-  regExpEnd: { optional: true, regExp: /^:::\s*$/ },
-  regExpStart: /^:::\s*details(?:\s+(.*))?\s*$/,
+  handleImportAfterStartMatch: importColonFencedContainer,
+  regExpEnd: { optional: true, regExp: /^:{3,}\s*$/ },
+  regExpStart: /^(:{3,})\s*details(?:\s+(.*))?\s*$/,
   replace: (rootNode, children, startMatch, _endMatch, linesInBetween, isImport) => {
-    const details = $createDetailsNode(startMatch[1]);
+    const details = $createDetailsNode(startMatch[2]);
 
     if (children?.length) {
       details.append(...children);
     } else if (linesInBetween?.length) {
-      $convertFromMarkdownString(linesInBetween.join("\n"), baseMarkdownTransformers, details, true);
+      $convertFromMarkdownString(linesInBetween.join("\n"), detailsBodyMarkdownTransformers, details, true);
     }
 
     if (details.getChildrenSize() === 1) {
@@ -329,7 +491,9 @@ const DETAILS: MultilineElementTransformer = {
   type: "multiline-element",
 };
 
-const markdownTransformers = [DETAILS, ...baseMarkdownTransformers];
+const admonitionBodyMarkdownTransformers = [ADMONITION_EMPTY_PARAGRAPH, ADMONITION, DETAILS, ...baseMarkdownTransformers];
+const detailsBodyMarkdownTransformers = [DETAILS_SUMMARY_EMPTY, ADMONITION, DETAILS, ...baseMarkdownTransformers];
+const markdownTransformers = [ADMONITION, DETAILS, ...baseMarkdownTransformers];
 const PROPERTY_AUTOSAVE_DELAY_MS = 650;
 const NOTE_AUTOSAVE_DELAY_MS = 60_000;
 const EMPTY_TODOS: ApiTodo[] = [];
@@ -386,6 +550,17 @@ function MarkdownEditorToolbar() {
     editor.focus();
   };
 
+  const insertAdmonition = (kind: AdmonitionKind) => {
+    editor.update(() => {
+      const node = $createAdmonitionNode(kind);
+      const paragraph = $createParagraphNode();
+      node.append(paragraph);
+      $insertNodes([node]);
+      node.selectEnd();
+    });
+    editor.focus();
+  };
+
   return (
     <Group gap={4} wrap="wrap">
       <Tooltip label="見出し">
@@ -413,6 +588,22 @@ function MarkdownEditorToolbar() {
           ▸
         </ActionIcon>
       </Tooltip>
+      <Menu shadow="md" width={150} withinPortal>
+        <Menu.Target>
+          <Tooltip label="情報ブロック">
+            <ActionIcon variant="subtle" color="gray" aria-label="情報ブロックを挿入">
+              ℹ️
+            </ActionIcon>
+          </Tooltip>
+        </Menu.Target>
+        <Menu.Dropdown>
+          {admonitionKinds.map((kind) => (
+            <Menu.Item key={kind} leftSection={<span aria-hidden>{admonitionMeta[kind].icon}</span>} onClick={() => insertAdmonition(kind)}>
+              {admonitionMeta[kind].label}
+            </Menu.Item>
+          ))}
+        </Menu.Dropdown>
+      </Menu>
       <Tooltip label="箇条書き">
         <ActionIcon variant="subtle" color="gray" aria-label="箇条書きを挿入" onClick={() => editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined)}>
           -
@@ -513,6 +704,46 @@ function DetailsSummaryClickPlugin() {
   return null;
 }
 
+function getAdmonitionShortcutBlock() {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
+
+  const anchorNode = selection.anchor.getNode();
+  const block = $isTextNode(anchorNode) ? anchorNode.getParent() : anchorNode;
+  if (!(block instanceof ElementNode)) return null;
+  if ($isTextNode(anchorNode) && selection.anchor.offset !== anchorNode.getTextContentSize()) return null;
+
+  const match = block.getTextContent().trim().match(/^:{3,}(info|warn|error|note)$/);
+  if (!match || !isAdmonitionKind(match[1])) return null;
+
+  return { block, kind: match[1] };
+}
+
+function AdmonitionMarkdownShortcutPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerCommand(
+      KEY_ENTER_COMMAND,
+      (event: KeyboardEvent | null) => {
+        const target = getAdmonitionShortcutBlock();
+        if (!target) return false;
+
+        event?.preventDefault();
+        const admonition = $createAdmonitionNode(target.kind);
+        const paragraph = $createParagraphNode();
+        admonition.append(paragraph);
+        target.block.replace(admonition);
+        paragraph.selectEnd();
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+  }, [editor]);
+
+  return null;
+}
+
 function DetailsStructurePlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -538,7 +769,22 @@ function DetailsStructurePlugin() {
 
 function getDetailsAncestor(node: LexicalNode) {
   if ($isDetailsNode(node)) return node;
-  return node.getParents().find($isDetailsNode) ?? null;
+  let current = node.getParent();
+  while (current) {
+    if ($isDetailsNode(current)) return current;
+    current = current.getParent();
+  }
+  return null;
+}
+
+function getAdmonitionAncestor(node: LexicalNode) {
+  if ($isAdmonitionNode(node)) return node;
+  let current = node.getParent();
+  while (current) {
+    if ($isAdmonitionNode(current)) return current;
+    current = current.getParent();
+  }
+  return null;
 }
 
 function isInDetailsSummary(node: LexicalNode, details: DetailsNode) {
@@ -566,26 +812,118 @@ function isSelectionAtDetailsEnd(details: DetailsNode) {
   return node === last && selection.anchor.offset === node.getChildrenSize();
 }
 
-function selectBeforeDetails(details: DetailsNode) {
-  const previous = details.getPreviousSibling();
+function isSelectionAtAdmonitionStart(admonition: AdmonitionNode) {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const node = selection.anchor.getNode();
+  if (!(admonition === node || admonition.isParentOf(node))) return false;
+  const first = admonition.getFirstDescendant() ?? admonition;
+  if ($isTextNode(node)) return node === first && selection.anchor.offset === 0;
+  return node === first && selection.anchor.offset === 0;
+}
+
+function isSelectionAtAdmonitionEnd(admonition: AdmonitionNode) {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const node = selection.anchor.getNode();
+  if (!(admonition === node || admonition.isParentOf(node))) return false;
+  const last = admonition.getLastDescendant() ?? admonition;
+  if ($isTextNode(node)) return node === last && selection.anchor.offset === node.getTextContentSize();
+  return node === last && selection.anchor.offset === node.getChildrenSize();
+}
+
+function isSelectionInAdmonitionFirstBlock(admonition: AdmonitionNode) {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const node = selection.anchor.getNode();
+  if (!(admonition === node || admonition.isParentOf(node))) return false;
+  const block = $isTextNode(node) ? node.getParent() : node;
+  const firstChild = admonition.getFirstChild();
+  return !!block && (block === firstChild || block.isParentOf(firstChild) || firstChild?.isParentOf(block));
+}
+
+function isSelectionInAdmonitionLastBlock(admonition: AdmonitionNode) {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+  const node = selection.anchor.getNode();
+  if (!(admonition === node || admonition.isParentOf(node))) return false;
+  const block = $isTextNode(node) ? node.getParent() : node;
+  const lastChild = admonition.getLastChild();
+  return !!block && (block === lastChild || block.isParentOf(lastChild) || lastChild?.isParentOf(block));
+}
+
+function getSelectionBlock() {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
+  const node = selection.anchor.getNode();
+  const block = $isTextNode(node) ? node.getParent() : node;
+  return block instanceof ElementNode ? block : null;
+}
+
+function selectBeforeBlock(block: ElementNode) {
+  const previous = block.getPreviousSibling();
   if (previous) {
     previous.selectEnd();
     return;
   }
   const paragraph = $createParagraphNode();
-  details.insertBefore(paragraph);
+  block.insertBefore(paragraph);
   paragraph.selectEnd();
 }
 
-function selectAfterDetails(details: DetailsNode) {
-  const next = details.getNextSibling();
+function selectAfterBlock(block: ElementNode) {
+  const next = block.getNextSibling();
   if (next) {
     next.selectStart();
     return;
   }
   const paragraph = $createParagraphNode();
-  details.insertAfter(paragraph);
+  block.insertAfter(paragraph);
   paragraph.selectStart();
+}
+
+function selectAdmonitionStart(admonition: AdmonitionNode) {
+  const firstChild = admonition.getFirstChild();
+  if (firstChild) {
+    firstChild.selectStart();
+    return;
+  }
+  const paragraph = $createParagraphNode();
+  admonition.append(paragraph);
+  paragraph.selectStart();
+}
+
+function selectAdmonitionEnd(admonition: AdmonitionNode) {
+  const lastChild = admonition.getLastChild();
+  if (lastChild) {
+    lastChild.selectEnd();
+    return;
+  }
+  const paragraph = $createParagraphNode();
+  admonition.append(paragraph);
+  paragraph.selectEnd();
+}
+
+function findNextAdmonitionSibling(node: LexicalNode) {
+  let current: LexicalNode | null = node;
+  while (current) {
+    const next = current.getNextSibling();
+    if ($isAdmonitionNode(next)) return next;
+    if ($isAdmonitionNode(current)) return null;
+    current = current.getParent();
+  }
+  return null;
+}
+
+function findPreviousAdmonitionSibling(node: LexicalNode) {
+  let current: LexicalNode | null = node;
+  while (current) {
+    const previous = current.getPreviousSibling();
+    if ($isAdmonitionNode(previous)) return previous;
+    if ($isAdmonitionNode(current)) return null;
+    current = current.getParent();
+  }
+  return null;
 }
 
 function detailsHasUserContent(details: DetailsNode) {
@@ -639,12 +977,12 @@ function DetailsDeletePlugin() {
   return null;
 }
 
-type DetailsMarkdownShortcut =
+type NestedMarkdownShortcut =
   | { kind: "heading"; marker: string; tag: HeadingTagType }
   | { kind: "quote"; marker: string }
   | { kind: "list"; checked?: boolean; marker: string; type: ListType };
 
-const detailsMarkdownShortcuts: DetailsMarkdownShortcut[] = [
+const nestedMarkdownShortcuts: NestedMarkdownShortcut[] = [
   { kind: "list", marker: "[]", type: "check", checked: false },
   { kind: "list", marker: "[ ]", type: "check", checked: false },
   { kind: "list", marker: "[x]", type: "check", checked: true },
@@ -662,7 +1000,7 @@ const detailsMarkdownShortcuts: DetailsMarkdownShortcut[] = [
   { kind: "quote", marker: ">" },
 ];
 
-function getDetailsShortcutBlock() {
+function getNestedShortcutBlock() {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
 
@@ -670,16 +1008,22 @@ function getDetailsShortcutBlock() {
   const block = $isTextNode(anchorNode) ? anchorNode.getParent() : anchorNode;
   if (!(block instanceof ElementNode)) return null;
 
-  const details = getDetailsAncestor(block);
-  if (!details || isInDetailsSummary(block, details)) return null;
-  if (block === details) return null;
-
+  if (!canApplyNestedMarkdownShortcut(block)) return null;
   if ($isTextNode(anchorNode) && selection.anchor.offset !== anchorNode.getTextContentSize()) return null;
 
   return block;
 }
 
-function applyDetailsMarkdownShortcut(block: ElementNode, shortcut: DetailsMarkdownShortcut) {
+function canApplyNestedMarkdownShortcut(block: ElementNode) {
+  const details = getDetailsAncestor(block);
+  const admonition = getAdmonitionAncestor(block);
+  if (!details && !admonition) return null;
+  if (details && isInDetailsSummary(block, details)) return null;
+  if (block === details || block === admonition) return null;
+  return true;
+}
+
+function applyNestedMarkdownShortcut(block: ElementNode, shortcut: NestedMarkdownShortcut) {
   if (shortcut.kind === "heading") {
     const heading = $createHeadingNode(shortcut.tag);
     block.replace(heading);
@@ -701,60 +1045,168 @@ function applyDetailsMarkdownShortcut(block: ElementNode, shortcut: DetailsMarkd
   item.selectEnd();
 }
 
-function DetailsMarkdownShortcutPlugin() {
+function applyNestedChecklistItemShortcut(item: ListItemNode, checked: boolean) {
+  const list = item.getParent();
+  if (!(list instanceof ElementNode) || !canApplyNestedMarkdownShortcut(item)) return;
+
+  const checkList = $createListNode("check");
+  const checkItem = $createListItemNode(checked);
+  checkList.append(checkItem);
+  list.replace(checkList);
+  checkItem.selectEnd();
+}
+
+function exitEmptyNestedListItem(item: ListItemNode) {
+  const list = item.getParent();
+  if (!(list instanceof ElementNode) || !canApplyNestedMarkdownShortcut(item)) return false;
+  if (item.getTextContent().trim().length > 0 || item.getIndent() > 0) return false;
+
+  const paragraph = $createParagraphNode();
+  const previous = item.getPreviousSibling();
+  const next = item.getNextSibling();
+
+  if (!previous && !next) {
+    list.replace(paragraph);
+  } else {
+    item.remove();
+    if (!previous) {
+      list.insertBefore(paragraph);
+    } else {
+      list.insertAfter(paragraph);
+    }
+  }
+
+  paragraph.selectStart();
+  return true;
+}
+
+function NestedMarkdownShortcutPlugin() {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
-    return editor.registerCommand(
-      KEY_SPACE_COMMAND,
-      (event: KeyboardEvent | null) => {
-        const block = getDetailsShortcutBlock();
-        if (!block) return false;
+    return mergeRegister(
+      editor.registerCommand(
+        KEY_ENTER_COMMAND,
+        (event: KeyboardEvent | null) => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
 
-        const marker = block.getTextContent();
-        const shortcut = detailsMarkdownShortcuts.find((candidate) => candidate.marker === marker);
-        if (!shortcut) return false;
+          const item = getListItemAncestor(selection.anchor.getNode());
+          if (!item || !exitEmptyNestedListItem(item)) return false;
 
-        event?.preventDefault();
-        applyDetailsMarkdownShortcut(block, shortcut);
-        return true;
-      },
-      COMMAND_PRIORITY_LOW,
+          event?.preventDefault();
+          return true;
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
+      editor.registerCommand(
+        KEY_SPACE_COMMAND,
+        (event: KeyboardEvent | null) => {
+          const block = getNestedShortcutBlock();
+          if (!block) return false;
+
+          const marker = block.getTextContent().trim();
+          const shortcut = nestedMarkdownShortcuts.find((candidate) => candidate.marker === marker);
+          if (!shortcut) return false;
+
+          event?.preventDefault();
+          applyNestedMarkdownShortcut(block, shortcut);
+          return true;
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
+      editor.registerNodeTransform(TextNode, (node) => {
+        const block = node.getParent();
+        if (!(block instanceof ElementNode)) return;
+
+        if ($isListItemNode(block)) {
+          const text = block.getTextContent();
+          if (text === "[] " || text === "[ ] ") applyNestedChecklistItemShortcut(block, false);
+          if (text === "[x] " || text === "[X] ") applyNestedChecklistItemShortcut(block, true);
+          return;
+        }
+
+        if (!canApplyNestedMarkdownShortcut(block)) return;
+
+        const text = block.getTextContent();
+        const shortcut = nestedMarkdownShortcuts.find((candidate) => text === `${candidate.marker} `);
+        if (!shortcut) return;
+
+        applyNestedMarkdownShortcut(block, shortcut);
+      }),
     );
   }, [editor]);
 
   return null;
 }
 
-function DetailsBoundaryNavigationPlugin() {
+function NestedBoundaryNavigationPlugin() {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
-    const moveBefore = (event: KeyboardEvent | null) => {
+    const moveBefore = (mode: "line" | "edge") => (event: KeyboardEvent | null) => {
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-      const details = getDetailsAncestor(selection.anchor.getNode());
-      if (!details || !isSelectionAtDetailsStart(details)) return false;
+      const node = selection.anchor.getNode();
+      const details = getDetailsAncestor(node);
+      const admonition = getAdmonitionAncestor(node);
+      const target =
+        details && isSelectionAtDetailsStart(details)
+          ? details
+          : admonition && (mode === "line" ? isSelectionInAdmonitionFirstBlock(admonition) : isSelectionAtAdmonitionStart(admonition))
+            ? admonition
+            : null;
+      if (!target) return false;
       event?.preventDefault();
-      selectBeforeDetails(details);
+      selectBeforeBlock(target);
       return true;
     };
 
-    const moveAfter = (event: KeyboardEvent | null) => {
+    const moveAfter = (mode: "line" | "edge") => (event: KeyboardEvent | null) => {
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-      const details = getDetailsAncestor(selection.anchor.getNode());
-      if (!details || !isSelectionAtDetailsEnd(details)) return false;
+      const node = selection.anchor.getNode();
+      const details = getDetailsAncestor(node);
+      const admonition = getAdmonitionAncestor(node);
+      const target =
+        details && isSelectionAtDetailsEnd(details)
+          ? details
+          : admonition && (mode === "line" ? isSelectionInAdmonitionLastBlock(admonition) : isSelectionAtAdmonitionEnd(admonition))
+            ? admonition
+            : null;
+      if (!target) return false;
       event?.preventDefault();
-      selectAfterDetails(details);
+      selectAfterBlock(target);
+      return true;
+    };
+
+    const moveIntoNextAdmonition = (event: KeyboardEvent | null) => {
+      const block = getSelectionBlock();
+      if (!block) return false;
+      const next = findNextAdmonitionSibling(block);
+      if (!next) return false;
+      event?.preventDefault();
+      selectAdmonitionStart(next);
+      return true;
+    };
+
+    const moveIntoPreviousAdmonition = (event: KeyboardEvent | null) => {
+      const block = getSelectionBlock();
+      if (!block) return false;
+      const previous = findPreviousAdmonitionSibling(block);
+      if (!previous) return false;
+      event?.preventDefault();
+      selectAdmonitionEnd(previous);
       return true;
     };
 
     return mergeRegister(
-      editor.registerCommand(KEY_ARROW_UP_COMMAND, moveBefore, COMMAND_PRIORITY_LOW),
-      editor.registerCommand(KEY_ARROW_LEFT_COMMAND, moveBefore, COMMAND_PRIORITY_LOW),
-      editor.registerCommand(KEY_ARROW_DOWN_COMMAND, moveAfter, COMMAND_PRIORITY_LOW),
-      editor.registerCommand(KEY_ARROW_RIGHT_COMMAND, moveAfter, COMMAND_PRIORITY_LOW),
+      editor.registerCommand(KEY_ARROW_UP_COMMAND, moveBefore("line"), COMMAND_PRIORITY_LOW),
+      editor.registerCommand(KEY_ARROW_UP_COMMAND, moveIntoPreviousAdmonition, COMMAND_PRIORITY_LOW),
+      editor.registerCommand(KEY_ARROW_LEFT_COMMAND, moveBefore("edge"), COMMAND_PRIORITY_LOW),
+      editor.registerCommand(KEY_ARROW_DOWN_COMMAND, moveAfter("line"), COMMAND_PRIORITY_LOW),
+      editor.registerCommand(KEY_ARROW_DOWN_COMMAND, moveIntoNextAdmonition, COMMAND_PRIORITY_LOW),
+      editor.registerCommand(KEY_ARROW_RIGHT_COMMAND, moveAfter("edge"), COMMAND_PRIORITY_LOW),
     );
   }, [editor]);
 
@@ -1058,7 +1510,7 @@ function MarkdownNoteEditor({
         $convertFromMarkdownString(initialMarkdownRef.current || "", markdownTransformers, undefined, true);
       },
       namespace: "TodoNotesEditor",
-      nodes: [HeadingNode, QuoteNode, ListNode, ListItemNode, CodeNode, LinkNode, DetailsNode, DetailsSummaryNode],
+      nodes: [HeadingNode, QuoteNode, ListNode, ListItemNode, CodeNode, LinkNode, AdmonitionNode, DetailsNode, DetailsSummaryNode],
       onError(error: Error) {
         throw error;
       },
@@ -1085,11 +1537,12 @@ function MarkdownNoteEditor({
           <ListPlugin />
           <CheckListPlugin />
           <MarkdownShortcutPlugin transformers={markdownTransformers} />
+          <AdmonitionMarkdownShortcutPlugin />
           <DetailsSummaryClickPlugin />
           <DetailsStructurePlugin />
           <DetailsDeletePlugin />
-          <DetailsMarkdownShortcutPlugin />
-          <DetailsBoundaryNavigationPlugin />
+          <NestedMarkdownShortcutPlugin />
+          <NestedBoundaryNavigationPlugin />
           <ListTabIndentPlugin />
           <MarkdownChangePlugin initialMarkdown={initialMarkdownRef.current} onChange={onChange} />
           <MarkdownBlurCommitPlugin onCommit={onCommit} />
@@ -1660,7 +2113,7 @@ export default function TodoSidePanel({ opened, onClose, selectedProjectId, todo
             <Group justify="space-between" align="center">
               <Text className="todo-sidepanel__section-title">Notes</Text>
               <Text size="xs" c="dimmed">
-                # + Space で見出し / [] + Space でチェックリスト / :::details + Enter で折りたたみ
+                # + Space で見出し / [] + Space でチェックリスト / :::info + Enter で情報ブロック
               </Text>
             </Group>
             {!isEditing || hydratedTodoId === todo?.id ? (

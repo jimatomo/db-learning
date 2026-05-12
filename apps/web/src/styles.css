@@ -1653,6 +1653,11 @@ select {
   text-decoration: line-through;
 }
 
+.markdown-editor__list-item--checked:focus,
+.markdown-editor__list-item--unchecked:focus {
+  outline: none;
+}
+
 .markdown-editor__nested-list-item.markdown-editor__list-item--checked,
 .markdown-editor__nested-list-item.markdown-editor__list-item--unchecked {
   padding-left: 0;

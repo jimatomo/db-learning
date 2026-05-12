@@ -215,15 +215,54 @@ const lexicalTheme = {
 const admonitionKinds = ["info", "warn", "error", "note"] as const;
 type AdmonitionKind = (typeof admonitionKinds)[number];
 
-const admonitionMeta: Record<AdmonitionKind, { icon: string; label: string }> = {
-  error: { icon: "🚫", label: "error" },
-  info: { icon: "ℹ️", label: "info" },
-  note: { icon: "🗒️", label: "note" },
-  warn: { icon: "⚠️", label: "warn" },
+const admonitionMeta: Record<AdmonitionKind, { label: string }> = {
+  error: { label: "エラー" },
+  info: { label: "情報" },
+  note: { label: "メモ" },
+  warn: { label: "注意" },
 };
 
 function isAdmonitionKind(value: string | undefined): value is AdmonitionKind {
   return admonitionKinds.includes(value as AdmonitionKind);
+}
+
+function AdmonitionIcon({ className, kind }: { className?: string; kind: AdmonitionKind }) {
+  if (kind === "warn") {
+    return (
+      <svg className={className} aria-hidden="true" viewBox="0 0 24 24" fill="none">
+        <path d="M12 7.7v5.1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M12 16.4h.01" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+        <path d="M10.2 4.6 3.5 17a1.8 1.8 0 0 0 1.6 2.6h13.8a1.8 1.8 0 0 0 1.6-2.6L13.8 4.6a2 2 0 0 0-3.6 0Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "error") {
+    return (
+      <svg className={className} aria-hidden="true" viewBox="0 0 24 24" fill="none">
+        <path d="m8.2 8.2 7.6 7.6M15.8 8.2l-7.6 7.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z" stroke="currentColor" strokeWidth="1.8" />
+      </svg>
+    );
+  }
+
+  if (kind === "note") {
+    return (
+      <svg className={className} aria-hidden="true" viewBox="0 0 24 24" fill="none">
+        <path d="M7.5 4.5h7.1L18.5 8.4v11.1h-11V4.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M14.4 4.7v4h4" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M10 12.2h5M10 15.4h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg className={className} aria-hidden="true" viewBox="0 0 24 24" fill="none">
+      <path d="M12 10.4v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M12 7.3h.01" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z" stroke="currentColor" strokeWidth="1.8" />
+    </svg>
+  );
 }
 
 class AdmonitionNode extends ElementNode {
@@ -244,11 +283,8 @@ class AdmonitionNode extends ElementNode {
 
   createDOM(_config: EditorConfig) {
     const container = document.createElement("aside");
-    const meta = admonitionMeta[this.__kind];
     container.className = `markdown-admonition markdown-admonition--${this.__kind}`;
-    container.dataset.admonitionIcon = meta.icon;
     container.dataset.admonitionKind = this.__kind;
-    container.dataset.admonitionLabel = meta.label;
     return container;
   }
 
@@ -258,11 +294,8 @@ class AdmonitionNode extends ElementNode {
 
   exportDOM(): DOMExportOutput {
     const aside = document.createElement("aside");
-    const meta = admonitionMeta[this.__kind];
     aside.className = `markdown-admonition markdown-admonition--${this.__kind}`;
-    aside.dataset.admonitionIcon = meta.icon;
     aside.dataset.admonitionKind = this.__kind;
-    aside.dataset.admonitionLabel = meta.label;
     return { element: aside };
   }
 
@@ -592,13 +625,13 @@ function MarkdownEditorToolbar() {
         <Menu.Target>
           <Tooltip label="情報ブロック">
             <ActionIcon variant="subtle" color="gray" aria-label="情報ブロックを挿入">
-              ℹ️
+              <AdmonitionIcon className="markdown-toolbar__admonition-icon" kind="info" />
             </ActionIcon>
           </Tooltip>
         </Menu.Target>
         <Menu.Dropdown>
           {admonitionKinds.map((kind) => (
-            <Menu.Item key={kind} leftSection={<span aria-hidden>{admonitionMeta[kind].icon}</span>} onClick={() => insertAdmonition(kind)}>
+            <Menu.Item key={kind} leftSection={<AdmonitionIcon className="markdown-toolbar__admonition-icon" kind={kind} />} onClick={() => insertAdmonition(kind)}>
               {admonitionMeta[kind].label}
             </Menu.Item>
           ))}

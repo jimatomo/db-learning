@@ -9,6 +9,7 @@ import {
   Select,
   Stack,
   Text,
+  Textarea,
   TextInput,
   Tooltip,
 } from "@mantine/core";
@@ -1483,9 +1484,11 @@ export default function TodoSidePanel({ opened, onClose, selectedProjectId, todo
             </ActionIcon>
           </Tooltip>
           <div className="todo-sidepanel__heading">
-            <TextInput
+            <Textarea
               aria-label="タイトル"
               required
+              autosize
+              minRows={1}
               placeholder={isEditing ? "Untitled TODO" : "新しい TODO"}
               value={form.title}
               variant="unstyled"
@@ -1494,7 +1497,9 @@ export default function TodoSidePanel({ opened, onClose, selectedProjectId, todo
                 wrapper: "todo-sidepanel__title-wrapper",
                 input: "todo-sidepanel__title-input",
               }}
-              onChange={(event: ChangeEvent<HTMLInputElement>) => setForm((current) => ({ ...current, title: event.target.value }))}
+              onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
+                setForm((current) => ({ ...current, title: event.target.value.replace(/[\r\n]+/g, " ") }))
+              }
             />
           </div>
           <Group className="todo-sidepanel__actions" gap="xs">

@@ -1,7 +1,10 @@
 import {
   DndContext,
   type DragEndEvent,
+  DragOverlay,
+  type DragStartEvent,
   PointerSensor,
+  pointerWithin,
   useDraggable,
   useDroppable,
   useSensor,
@@ -9,7 +12,7 @@ import {
 } from "@dnd-kit/core";
 import { Alert, Badge, Box, Button, Group, MultiSelect, Paper, Stack, Text } from "@mantine/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useState } from "react";
 import { api, type ApiStatus, type ApiTodo, type AppTimeZone } from "../api";
 import { formatTimestampLabel } from "../dateTime";
 import { getLabelBadgeStyle } from "../labelColors";
@@ -34,26 +37,11 @@ function isTodoOverdue(todo: ApiTodo) {
   return !Number.isNaN(due.getTime()) && due.getTime() < Date.now();
 }
 
-function DraggableCard({ todo, onEdit, timeZone }: { todo: ApiTodo; onEdit: (todo: ApiTodo) => void; timeZone: AppTimeZone }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: String(todo.id),
-    data: { todo },
-  });
-  const style = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, opacity: isDragging ? 0.72 : 1 }
-    : undefined;
+function TodoCardContent({ todo, timeZone }: { todo: ApiTodo; timeZone: AppTimeZone }) {
   const hasBadges = todo.labels.length > 0;
 
   return (
-    <Paper
-      ref={setNodeRef}
-      style={style}
-      {...listeners}
-      {...attributes}
-      onClick={() => onEdit(todo)}
-      className="todo-card"
-      styles={{ root: { cursor: "grab" } }}
-    >
+    <>
       <Group justify="space-between" align="flex-start" gap="sm" wrap="nowrap">
         <div className="todo-card__content">
           <Text className="todo-card__title">{todo.title}</Text>
@@ -87,6 +75,30 @@ function DraggableCard({ todo, onEdit, timeZone }: { todo: ApiTodo; onEdit: (tod
           </Badge>
         ))}
       </Group>
+    </>
+  );
+}
+
+function DraggableCard({ todo, onEdit, timeZone }: { todo: ApiTodo; onEdit: (todo: ApiTodo) => void; timeZone: AppTimeZone }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `todo:${todo.id}`,
+    data: { todo },
+  });
+  const style: CSSProperties = {
+    opacity: isDragging ? 0.28 : 1,
+  };
+
+  return (
+    <Paper
+      ref={setNodeRef}
+      style={style}
+      {...listeners}
+      {...attributes}
+      onClick={() => onEdit(todo)}
+      className="todo-card"
+      styles={{ root: { cursor: "grab" } }}
+    >
+      <TodoCardContent todo={todo} timeZone={timeZone} />
     </Paper>
   );
 }
@@ -104,7 +116,7 @@ function Column({
   onEdit: (todo: ApiTodo) => void;
   timeZone: AppTimeZone;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: colId });
+  const { setNodeRef, isOver } = useDroppable({ id: `status:${colId}`, data: { statusKey: colId } });
   const overdue = todos.filter(isTodoOverdue).length;
 
   return (
@@ -145,6 +157,7 @@ export default function KanbanPage({ selectedProjectId }: { selectedProjectId: n
   const { data: statuses = [] } = useQuery({ queryKey: ["statuses"], queryFn: api.statuses });
   const [panelOpened, setPanelOpened] = useState(false);
   const [editingTodo, setEditingTodo] = useState<ApiTodo | null>(null);
+  const [activeTodo, setActiveTodo] = useState<ApiTodo | null>(null);
   const timeZone = settings?.timeZone ?? "Asia/Tokyo";
   const [visibleStatusKeys, setVisibleStatusKeys] = useState<string[] | null>(() => {
     if (typeof window === "undefined") return null;
@@ -217,24 +230,50 @@ export default function KanbanPage({ selectedProjectId }: { selectedProjectId: n
 
   const patch = useMutation({
     mutationFn: async ({ id, body }: { id: number; body: Record<string, unknown> }) => api.patchTodo(id, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["todos"] }),
+    onMutate: async ({ id, body }) => {
+      await qc.cancelQueries({ queryKey: ["todos"] });
+      const previousTodos = qc.getQueriesData<ApiTodo[]>({ queryKey: ["todos"] });
+
+      for (const [queryKey, queryTodos] of previousTodos) {
+        if (!queryTodos) continue;
+        qc.setQueryData<ApiTodo[]>(
+          queryKey,
+          queryTodos.map((todo) => (todo.id === id ? { ...todo, ...body } : todo)),
+        );
+      }
+
+      return { previousTodos };
+    },
+    onError: (_error, _variables, context) => {
+      for (const [queryKey, queryTodos] of context?.previousTodos ?? []) {
+        qc.setQueryData(queryKey, queryTodos);
+      }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["todos"] }),
   });
+
+  const onDragStart = (event: DragStartEvent) => {
+    setActiveTodo((event.active.data.current?.todo as ApiTodo | undefined) ?? null);
+  };
 
   const onDragEnd = (event: DragEndEvent) => {
     const todo = event.active.data.current?.todo as ApiTodo | undefined;
-    const overId = event.over?.id?.toString();
-    if (!todo || !overId || !lesson) return;
+    const overStatusKey = event.over?.data.current?.statusKey as string | undefined;
+    setActiveTodo(null);
+    if (!todo || !overStatusKey || !lesson) return;
 
     if (lesson.lesson === "a") {
-      if (todo.status === overId) return;
-      patch.mutate({ id: todo.id, body: { status: overId } });
+      if (todo.status === overStatusKey) return;
+      patch.mutate({ id: todo.id, body: { status: overStatusKey } });
       return;
     }
 
-    const newStatusId = Number(overId);
+    const newStatusId = Number(overStatusKey);
     if (Number.isNaN(newStatusId) || todo.statusId === newStatusId) return;
     patch.mutate({ id: todo.id, body: { statusId: newStatusId } });
   };
+
+  const onDragCancel = () => setActiveTodo(null);
 
   const total = todos.length;
   const overdue = todos.filter(isTodoOverdue).length;
@@ -283,7 +322,13 @@ export default function KanbanPage({ selectedProjectId }: { selectedProjectId: n
         </Alert>
       ) : null}
 
-      <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={pointerWithin}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragCancel={onDragCancel}
+      >
         <Box className="board">
           {(statuses as ApiStatus[]).map((status) => {
             const colId = statusKey(status);
@@ -292,6 +337,13 @@ export default function KanbanPage({ selectedProjectId }: { selectedProjectId: n
             return <Column key={colId} colId={colId} status={status} todos={list} onEdit={handleEdit} timeZone={timeZone} />;
           })}
         </Box>
+        <DragOverlay zIndex={1000} dropAnimation={null}>
+          {activeTodo ? (
+            <Paper className="todo-card todo-card--overlay" styles={{ root: { cursor: "grabbing" } }}>
+              <TodoCardContent todo={activeTodo} timeZone={timeZone} />
+            </Paper>
+          ) : null}
+        </DragOverlay>
       </DndContext>
 
       <TodoSidePanel opened={panelOpened} todo={editingTodo} selectedProjectId={selectedProjectId} onClose={handleClosePanel} />

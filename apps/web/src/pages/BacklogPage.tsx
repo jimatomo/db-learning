@@ -88,7 +88,7 @@ function Rows({
                 <Group justify="space-between" align="flex-start" gap="sm" wrap="nowrap">
                   <div className="backlog-row__primary">
                     <div className="backlog-row__title-line">
-                      <Text fw={700} size="sm">
+                      <Text className="backlog-row__title" fw={700} size="sm">
                         {todo.title}
                       </Text>
                       <Badge variant="light" color="gray" size="xs">

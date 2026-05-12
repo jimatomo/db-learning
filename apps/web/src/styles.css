@@ -184,8 +184,9 @@ select {
   grid-auto-columns: minmax(260px, 320px);
   grid-template-columns: none;
   gap: 0.75rem;
-  align-items: flex-start;
+  align-items: stretch;
   overflow-x: auto;
+  overflow-y: visible;
   padding-bottom: 0.45rem;
   overscroll-behavior-x: contain;
 }
@@ -197,6 +198,7 @@ select {
 }
 
 .column-card {
+  height: 100%;
   min-height: 220px;
   padding: 0.75rem;
   border-color: var(--app-line);
@@ -243,6 +245,10 @@ select {
   box-shadow: 0 6px 14px rgba(20, 31, 43, 0.06);
 }
 
+.todo-card--overlay {
+  box-shadow: 0 14px 30px rgba(20, 31, 43, 0.18);
+}
+
 .todo-card__content {
   min-width: 0;
 }
@@ -251,6 +257,8 @@ select {
   font-size: 0.9rem;
   font-weight: 700;
   line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .todo-card__description {
@@ -354,6 +362,12 @@ select {
   gap: 0.45rem;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.backlog-row__title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .backlog-row__children {
@@ -1339,7 +1353,7 @@ select {
 
 .todo-sidepanel__title-input {
   min-height: 2rem;
-  height: 2rem;
+  height: auto;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -1349,6 +1363,9 @@ select {
   font-weight: 800;
   line-height: 1.1;
   letter-spacing: 0;
+  overflow-wrap: anywhere;
+  resize: none;
+  word-break: break-word;
 }
 
 .todo-sidepanel__title-input:focus {
